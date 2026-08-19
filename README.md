@@ -36,3 +36,21 @@ http://127.0.0.1:8877/index.html
 ## 说明
 
 当前版本为本地网页工具，依赖本地服务处理飞书读取与导出逻辑。
+
+## Render 部署
+
+仓库已包含：
+
+- `requirements.txt`
+- `render.yaml`
+
+Render 连接 GitHub 仓库后可直接创建 Web Service 并使用：
+
+```bash
+python app.py
+```
+
+注意：
+
+- 在线版默认可用本地文件上传、预览、抽样、导出 `CSV / XLSX`
+- `在线飞书读取` 和 `导出飞书表格` 依赖 `lark-cli`，普通 Render 环境默认没有这套能力，需要额外改成官方 API 才能完全在线使用

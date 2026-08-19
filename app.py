@@ -1,6 +1,8 @@
 import csv
 import io
 import json
+import os
+import shutil
 import subprocess
 import tempfile
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -11,7 +13,8 @@ import xlsxwriter
 
 
 ROOT = Path(__file__).resolve().parent
-PORT = 8877
+PORT = int(os.environ.get("PORT", "8877"))
+HOST = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
 
 
 def excel_col_name(index):
@@ -200,6 +203,8 @@ def create_lark_workbook(title, headers, matrix, highlighted_positions):
 
 
 def run_lark_cli(args):
+    if shutil.which("lark-cli") is None:
+        raise RuntimeError("当前部署环境没有安装飞书读取能力，在线飞书读取和导出飞书表格暂时不可用，请先使用本地文件上传，或单独补充飞书 API 部署配置。")
     result = subprocess.run(
         args,
         cwd=str(ROOT),
@@ -414,6 +419,6 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"Server running at http://127.0.0.1:{PORT}")
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"Server running at http://{HOST}:{PORT}")
     server.serve_forever()
