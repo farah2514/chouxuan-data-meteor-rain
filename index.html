@@ -1025,8 +1025,11 @@
           }
           const blob = await response.blob();
           const disposition = response.headers.get("Content-Disposition") || "";
+          const matchedUtf8 = disposition.match(/filename\*=UTF-8''([^;]+)/i);
           const matched = disposition.match(/filename="([^"]+)"/);
-          const fileName = matched ? matched[1] : "export";
+          const fileName = matchedUtf8
+            ? decodeURIComponent(matchedUtf8[1])
+            : (matched ? matched[1] : "export");
           const link = document.createElement("a");
           const objectUrl = URL.createObjectURL(blob);
           link.href = objectUrl;
