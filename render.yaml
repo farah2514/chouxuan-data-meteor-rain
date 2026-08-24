@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: chouxuan-data-meteor-rain
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true

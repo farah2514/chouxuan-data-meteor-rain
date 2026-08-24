@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
 const SAMPLER_ROOT = path.join(ROOT, "sampler");
 const SAMPLER_PORT = 8877;
+const ASSISTED_EXTRACT_ENABLED = process.env.ALLOW_ASSISTED_EXTRACT !== "false";
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -909,6 +910,14 @@ async function closeAssistSession(sessionId) {
 }
 
 async function handleAssistStart(reqUrl, res) {
+  if (!ASSISTED_EXTRACT_ENABLED) {
+    sendJson(res, 501, {
+      error: "当前线上部署环境暂不支持辅助提图",
+      hint: "辅助提图需要打开本地可见浏览器窗口，云端服务器没有桌面界面。你可以继续使用普通提图，或在本地运行项目时使用辅助提图。",
+    });
+    return;
+  }
+
   const target = reqUrl.searchParams.get("url");
   if (!target) {
     sendJson(res, 400, { error: "缺少 url 参数" });
@@ -991,6 +1000,11 @@ async function handleAssistCancel(reqUrl, res) {
 
 const server = http.createServer(async (req, res) => {
   const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+
+  if (reqUrl.pathname === "/healthz") {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
 
   if (reqUrl.pathname.startsWith("/api/")) {
     try {
