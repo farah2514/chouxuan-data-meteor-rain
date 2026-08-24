@@ -1,0 +1,2220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>分类筛选与随机抽样工具</title>
+  <style>
+    :root {
+      --bg: #fffbee;
+      --panel: #fffdf8;
+      --panel-soft: #fff7ea;
+      --text: #66565d;
+      --muted: #98858e;
+      --line: #f4e2c3;
+      --line-strong: #efcfda;
+      --brand: #ef91b4;
+      --brand-soft: #ffe7f0;
+      --ok: #d86f98;
+      --warn: #d7a35d;
+      --danger: #ef7d7d;
+      --blue-soft: #e8f4ff;
+      --yellow-soft: #fff3c9;
+      --shadow: 0 10px 24px rgba(228, 196, 171, 0.18);
+      --radius: 26px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+        "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle, rgba(243, 218, 140, 0.54) 1.8px, transparent 2.2px) 0 0 / 28px 28px,
+        linear-gradient(180deg, #fffdf4 0%, var(--bg) 100%);
+      color: var(--text);
+    }
+
+    .container {
+      max-width: 100%;
+      margin: 0 auto;
+      padding: 16px 16px 42px;
+    }
+
+    .hero {
+      margin-bottom: 14px;
+      padding: 14px 18px;
+      border: 2px solid #f3ddd0;
+      border-radius: 26px;
+      background: linear-gradient(180deg, rgba(255, 253, 246, 0.98), rgba(255, 248, 236, 0.96));
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero h1 {
+      margin: 0 0 4px;
+      font-size: 26px;
+      line-height: 1.2;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 760px;
+      line-height: 1.45;
+      font-size: 13px;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: 18px;
+      top: 14px;
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      background:
+        radial-gradient(circle at 11px 12px, #fff 0 2px, transparent 2.5px),
+        radial-gradient(circle at 23px 12px, #fff 0 2px, transparent 2.5px),
+        linear-gradient(180deg, #ffeeb8, #ffd7e5);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.72), 0 6px 14px rgba(235, 193, 208, 0.28);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 2px solid rgba(243, 220, 198, 0.95);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .panel::after {
+      content: "";
+      position: absolute;
+      right: 14px;
+      top: 14px;
+      width: 18px;
+      height: 18px;
+      border-radius: 7px;
+      background: linear-gradient(180deg, #ffe8f0, #fff0bc);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.78);
+    }
+
+    .panel-header {
+      padding: 14px 18px 10px;
+      border-bottom: 1px solid rgba(243, 226, 205, 0.96);
+      background: linear-gradient(180deg, rgba(255, 250, 242, 0.96), rgba(255, 255, 255, 0.98));
+    }
+
+    .panel-header h2,
+    .panel-header h3 {
+      margin: 0 0 6px;
+      font-size: 18px;
+    }
+
+    .panel-header h2::before,
+    .panel-header h3::before {
+      content: "";
+      display: inline-block;
+      width: 22px;
+      height: 22px;
+      margin-right: 8px;
+      vertical-align: -5px;
+      border-radius: 8px;
+      background:
+        radial-gradient(circle at 8px 9px, #fff 0 1.7px, transparent 2px),
+        radial-gradient(circle at 14px 9px, #fff 0 1.7px, transparent 2px),
+        linear-gradient(180deg, #eaf6ff, #ffeec3);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.8);
+    }
+
+    .panel-header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .panel-body {
+      padding: 16px 18px 18px;
+    }
+
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .grid > .panel:first-of-type .panel-body.stack {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+
+    .grid > .panel:first-of-type .panel-body.stack > .field,
+    .grid > .panel:first-of-type .panel-body.stack > .row {
+      grid-column: span 6;
+    }
+
+    .grid > .panel:first-of-type .panel-body.stack > .sticky-actions,
+    .grid > .panel:first-of-type .panel-body.stack > .divider,
+    .grid > .panel:first-of-type .panel-body.stack > .footer-note {
+      grid-column: 1 / -1;
+    }
+
+    .grid > .panel:first-of-type .panel-body.stack > .stack,
+    .grid > .panel:first-of-type .panel-body.stack > .balance-box,
+    .grid > .panel:first-of-type .panel-body.stack > .sidebar-plan-section {
+      grid-column: span 4;
+      align-self: stretch;
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1 1 180px;
+      min-width: 0;
+    }
+
+    .field label {
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    input,
+    select,
+    button,
+    textarea {
+      font: inherit;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select,
+    textarea {
+      width: 100%;
+      border: 2px solid var(--line-strong);
+      border-radius: 18px;
+      padding: 10px 12px;
+      background: #fffefb;
+      color: var(--text);
+      transition: 0.2s ease;
+      box-shadow: inset 0 -2px 0 rgba(255, 239, 204, 0.9);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 88px;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: var(--brand);
+      box-shadow: 0 0 0 5px rgba(239, 125, 167, 0.15);
+    }
+
+    input[type="file"] {
+      width: 100%;
+      border: 2px solid #f2decb;
+      border-radius: 20px;
+      padding: 14px;
+      background: linear-gradient(180deg, #fffdf7, #fff7ea);
+    }
+
+    button,
+    .app-modal-link {
+      border: 2px solid rgba(241, 210, 181, 0.96);
+      border-radius: 999px;
+      padding: 10px 16px;
+      background: linear-gradient(180deg, #fffefb, #fff5e3);
+      color: #885d72;
+      cursor: pointer;
+      transition: 0.2s ease;
+      font-weight: 700;
+      box-shadow: 0 6px 14px rgba(230, 198, 174, 0.24);
+      position: relative;
+      overflow: hidden;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    button::after,
+    .app-modal-link::after {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      pointer-events: none;
+    }
+
+    button:hover,
+    .app-modal-link:hover {
+      transform: translateY(-1px);
+    }
+
+    button:active,
+    .app-modal-link:active {
+      transform: translateY(1px);
+      box-shadow: 0 3px 10px rgba(230, 198, 174, 0.18);
+    }
+
+    button.primary,
+    .app-modal-link.primary {
+      background: linear-gradient(180deg, #ff9fc1, #f17ca6);
+      color: #fff;
+      border-color: #dc7098;
+      box-shadow: 0 6px 0 rgba(232, 168, 193, 0.88);
+    }
+
+    button.soft,
+    .app-modal-link.soft {
+      background: linear-gradient(180deg, #eef7ff, #dff0ff);
+      color: #6a84a3;
+    }
+
+    button.ghost,
+    .app-modal-link.ghost {
+      background: #fffdfd;
+    }
+
+    button.danger {
+      background: #fee2e2;
+      color: var(--danger);
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(244, 219, 187, 0.95), transparent);
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .stat-card {
+      border: 2px solid rgba(244, 225, 201, 0.96);
+      border-radius: 22px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fffefb 0%, #fff7ea 100%);
+      box-shadow: 0 8px 18px rgba(233, 205, 183, 0.14);
+    }
+
+    .stat-card .label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    .stat-card .value {
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .filter-item {
+      border: 1px solid rgba(219, 227, 240, 0.95);
+      border-radius: 14px;
+      padding: 12px;
+      background: #fcfdff;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow: auto;
+      border: 2px solid rgba(244, 225, 201, 0.96);
+      border-radius: 22px;
+      background: #fffefb;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid rgba(247, 232, 217, 0.96);
+      padding: 10px 12px;
+      font-size: 13px;
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #fff7ea;
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      color: #8b6678;
+    }
+
+    tr:hover td {
+      background: #fff8fb;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .badge.ok {
+      background: #ffe3ee;
+      color: var(--ok);
+    }
+
+    .badge.warn {
+      background: #fff0da;
+      color: var(--warn);
+    }
+
+    .badge.info {
+      background: #ffe6ef;
+      color: var(--brand);
+    }
+
+    .sub-panels {
+      display: grid;
+      gap: 14px;
+    }
+
+    .sticky-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    #loadLarkBtn::before,
+    #loadRangeBtn::before,
+    #sampleBtn::before,
+    #exportSampleBtn::before,
+    #resetBtn::before,
+    .app-modal-link::before {
+      content: "";
+      width: 14px;
+      height: 14px;
+      border-radius: 5px;
+      background: linear-gradient(180deg, #ffe8f0, #fff1c8);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.78);
+      flex: 0 0 auto;
+    }
+
+    .pill {
+      background: linear-gradient(180deg, #fff3f8, #ffe6ef);
+      color: #d56e95;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 2px solid rgba(239, 125, 167, 0.18);
+    }
+
+    .empty {
+      padding: 36px 18px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .footer-note {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .preview-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .preview-title h3 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .preview-title h3::before {
+      content: "";
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      margin-right: 8px;
+      vertical-align: -3px;
+      border-radius: 7px;
+      background: linear-gradient(180deg, #eaf6ff, #ffeec3);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.8);
+    }
+
+    .small-input {
+      width: 120px;
+    }
+
+    .plan-banner {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 14px;
+      padding: 14px 16px;
+      border: 1px solid #fde68a;
+      border-radius: 14px;
+      background: linear-gradient(180deg, #fffbea 0%, #fffbeb 100%);
+    }
+
+    .plan-banner h4 {
+      margin: 0 0 6px;
+      font-size: 15px;
+    }
+
+    .plan-banner p {
+      margin: 0;
+      color: #7c5e10;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .editable-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 92px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #fef3c7;
+      color: #92400e;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .sample-count-input {
+      width: 120px;
+      background: #fff7d6;
+      border-color: #fbbf24;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .filter-select-values {
+      min-height: 132px;
+    }
+
+    .balance-box {
+      border: 2px solid #f2decb;
+      border-radius: 22px;
+      background: linear-gradient(180deg, #fffefb, #fff8ec);
+      padding: 12px;
+      box-shadow: 0 8px 18px rgba(233, 205, 183, 0.14);
+    }
+
+    .balance-box h4 {
+      margin: 0 0 6px;
+      font-size: 14px;
+      color: #8d5d73;
+    }
+
+    .balance-box p {
+      margin: 0 0 10px;
+      color: #a07d8d;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .balance-values {
+      min-height: 120px;
+    }
+
+    .sample-count-cell {
+      background: #fffdf3;
+    }
+
+    .strong-text {
+      font-weight: 700;
+      color: #111827;
+    }
+
+    .sampled-row td {
+      background: #dcecff !important;
+      color: #587193 !important;
+      font-weight: 600;
+    }
+
+    .sampled-row td:first-child {
+      box-shadow: inset 8px 0 0 #8ab9ee;
+    }
+
+    .sidebar-plan-section {
+      border: 2px solid #f2decb;
+      border-radius: 22px;
+      background: linear-gradient(180deg, #fffefb 0%, #fff8ec 100%);
+      padding: 14px;
+      box-shadow: 0 8px 18px rgba(233, 205, 183, 0.14);
+    }
+
+    .sidebar-plan-section h3 {
+      margin: 0 0 6px;
+      font-size: 16px;
+    }
+
+    .sidebar-plan-section p {
+      margin: 0 0 12px;
+      color: #9c7e6d;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .sidebar-plan-total {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .sidebar-total-card {
+      border-radius: 16px;
+      background: #fffef9;
+      border: 2px solid #f4e1b3;
+      padding: 10px 12px;
+    }
+
+    .sidebar-total-card .label {
+      display: block;
+      color: #b57a5f;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    .sidebar-total-card .value {
+      font-size: 22px;
+      font-weight: 800;
+      color: #111827;
+      line-height: 1;
+    }
+
+    .sidebar-plan-list {
+      max-height: 360px;
+      overflow: auto;
+      border: 2px solid #f4e1b3;
+      border-radius: 16px;
+      background: #fffef9;
+    }
+
+    .sidebar-plan-table {
+      width: 100%;
+      min-width: 520px;
+      border-collapse: collapse;
+    }
+
+    .sidebar-plan-table th,
+    .sidebar-plan-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid #f6ead1;
+      font-size: 12px;
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    .sidebar-plan-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #fff8e8;
+      color: #a86d50;
+      font-weight: 800;
+    }
+
+    .sidebar-plan-table td.num,
+    .sidebar-plan-table th.num {
+      text-align: right;
+    }
+
+    .sidebar-plan-table tr.total-row td {
+      background: #fff7ea;
+      color: #a86d50;
+      font-weight: 800;
+    }
+
+    .sidebar-plan-input {
+      width: 88px;
+      text-align: center;
+      font-weight: 800;
+      background: #fff1c8;
+      border-color: #f0bd78;
+    }
+
+    .app-modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(124, 94, 108, 0.28);
+      backdrop-filter: blur(4px);
+      z-index: 999;
+    }
+
+    .app-modal.show {
+      display: flex;
+    }
+
+    .app-modal-card {
+      width: min(480px, 100%);
+      border-radius: 34px;
+      border: 2px solid #f2ddca;
+      background: linear-gradient(180deg, #fffefb, #fff7ea);
+      box-shadow: 0 18px 36px rgba(224, 194, 170, 0.22);
+      overflow: hidden;
+      transform: none;
+      position: relative;
+    }
+
+    .app-modal-card::after {
+      content: "";
+      position: absolute;
+      right: 18px;
+      top: 16px;
+      width: 28px;
+      height: 28px;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #eaf6ff, #ffeec3);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.8);
+    }
+
+    .app-modal-body {
+      padding: 22px 22px 16px;
+      text-align: center;
+    }
+
+    .app-modal-illus {
+      display: none;
+      width: 220px;
+      max-width: 100%;
+      margin: 0 auto 10px;
+      border-radius: 22px;
+    }
+
+    .app-modal.show-image .app-modal-illus {
+      display: block;
+    }
+
+    .app-modal-sticker {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 14px;
+      margin-bottom: 10px;
+      border-radius: 999px;
+      background: #fff7c4;
+      border: 2px solid #f0cf8f;
+      color: #9e735f;
+      font-weight: 800;
+      transform: rotate(-5deg);
+    }
+
+    .app-modal-sticker.hide {
+      display: none;
+    }
+
+    .app-modal-title {
+      margin: 0 0 8px;
+      font-size: 24px;
+      color: #7a5868;
+    }
+
+    .app-modal-text {
+      margin: 0;
+      color: #9b8692;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+
+    .app-modal-actions {
+      padding: 0 22px 22px;
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .app-modal-link {
+      display: none;
+      text-decoration: none;
+    }
+
+    .app-modal-link.show {
+      display: inline-flex;
+    }
+
+    @media (max-width: 760px) {
+      .grid > .panel:first-of-type .panel-body.stack {
+        grid-template-columns: 1fr;
+      }
+
+      .grid > .panel:first-of-type .panel-body.stack > * {
+        grid-column: 1 / -1;
+      }
+
+      .stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .container {
+        padding-inline: 10px;
+      }
+
+      .panel-body,
+      .panel-header {
+        padding-inline: 12px;
+      }
+    }
+
+    /* black & white reset */
+    :root {
+      --bg: #f5f5f5;
+      --panel: #ffffff;
+      --panel-soft: #f7f7f7;
+      --text: #111111;
+      --muted: #666666;
+      --line: #e3e3e3;
+      --line-strong: #cfcfcf;
+      --brand: #111111;
+      --brand-soft: #f0f0f0;
+      --ok: #111111;
+      --warn: #444444;
+      --danger: #444444;
+      --blue-soft: #f0f0f0;
+      --yellow-soft: #f0f0f0;
+      --shadow: none;
+      --radius: 18px;
+    }
+
+    body {
+      background: #f5f5f5 !important;
+      color: #111111 !important;
+    }
+
+    .hero,
+    .panel,
+    .stat-card,
+    .balance-box,
+    .sidebar-plan-section,
+    .table-wrap,
+    .sidebar-plan-list,
+    .sidebar-total-card,
+    .app-modal-card {
+      background: #ffffff !important;
+      border: 1px solid #d9d9d9 !important;
+      box-shadow: none !important;
+    }
+
+    .hero::after,
+    .panel::after,
+    .panel-header h2::before,
+    .panel-header h3::before,
+    .preview-title h3::before,
+    #loadLarkBtn::before,
+    #loadRangeBtn::before,
+    #sampleBtn::before,
+    #exportSampleBtn::before,
+    #resetBtn::before,
+    .app-modal-link::before,
+    .app-modal-card::after {
+      display: none !important;
+      content: none !important;
+    }
+
+    .panel-header {
+      background: #ffffff !important;
+      border-bottom: 1px solid #e3e3e3 !important;
+    }
+
+    .divider {
+      background: #e3e3e3 !important;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select,
+    textarea,
+    input[type="file"],
+    .sample-count-input,
+    .sidebar-plan-input {
+      background: #ffffff !important;
+      border: 1px solid #cfcfcf !important;
+      color: #111111 !important;
+      box-shadow: none !important;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: #111111 !important;
+      box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.08) !important;
+    }
+
+    button,
+    .app-modal-link,
+    .pill,
+    .badge,
+    .editable-chip {
+      background: #ffffff !important;
+      border: 1px solid #cfcfcf !important;
+      color: #111111 !important;
+      box-shadow: none !important;
+      transform: none !important;
+    }
+
+    button::after,
+    .app-modal-link::after {
+      display: none !important;
+    }
+
+    button.primary,
+    .app-modal-link.primary {
+      background: #111111 !important;
+      border-color: #111111 !important;
+      color: #ffffff !important;
+      box-shadow: none !important;
+    }
+
+    button.soft,
+    button.ghost,
+    button.danger,
+    .app-modal-link.ghost {
+      background: #f7f7f7 !important;
+      color: #111111 !important;
+    }
+
+    th {
+      background: #f7f7f7 !important;
+      color: #111111 !important;
+    }
+
+    th,
+    td,
+    .sidebar-plan-table th,
+    .sidebar-plan-table td {
+      border-bottom: 1px solid #ececec !important;
+    }
+
+    tr:hover td,
+    .sampled-row td,
+    .sidebar-plan-table tr.total-row td {
+      background: #f7f7f7 !important;
+      color: #111111 !important;
+      box-shadow: none !important;
+    }
+
+    .hint,
+    .muted,
+    .footer-note,
+    .hero p,
+    .panel-header p,
+    .balance-box p,
+    .sidebar-plan-section p,
+    .empty,
+    .badge.info,
+    .badge.ok,
+    .badge.warn,
+    .sidebar-total-card .label {
+      color: #666666 !important;
+    }
+
+    .app-modal {
+      background: rgba(0, 0, 0, 0.45) !important;
+      backdrop-filter: blur(2px);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="hero">
+      <h1>分类筛选与随机抽样工具</h1>
+      <p>上传数据，按分类随机抽样。</p>
+    </section>
+
+    <div class="grid">
+      <aside class="panel">
+        <div class="panel-header">
+          <h2>数据设置</h2>
+          <p>导入后设置范围、分类和抽样方式。</p>
+        </div>
+        <div class="panel-body stack">
+          <div class="field">
+            <label for="fileInput">上传数据文件</label>
+            <input id="fileInput" type="file" accept=".csv,.tsv,.xlsx,.xls,.json,.txt" />
+            <div class="hint">本地文件或飞书链接二选一。</div>
+          </div>
+
+          <div class="field">
+            <label for="larkUrlInput">在线飞书表格链接</label>
+            <input id="larkUrlInput" type="text" placeholder="粘贴飞书 sheets 链接，例如 https://.../sheets/xxx?sheet=xxx" />
+            <div class="sticky-actions">
+              <button id="loadLarkBtn" class="soft">读取飞书链接</button>
+            </div>
+            <div class="hint">读取后选择工作表和范围。</div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="sheetSelect">工作表</label>
+              <select id="sheetSelect" disabled></select>
+            </div>
+            <div class="field">
+              <label for="rangeInput">单元格范围</label>
+              <input id="rangeInput" type="text" placeholder="例如 A1:H200，留空则取全部" />
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="categoryField">分类字段</label>
+              <select id="categoryField" disabled></select>
+            </div>
+            <div class="field">
+              <label for="defaultSampleRate">默认抽样比例</label>
+              <input id="defaultSampleRate" type="number" min="0" max="100" step="0.1" value="10" />
+            </div>
+          </div>
+
+          <div class="sticky-actions">
+            <button id="loadRangeBtn" class="primary" disabled>读取当前范围</button>
+            <button id="resetBtn" class="ghost">清空</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="stack">
+            <div class="preview-title">
+              <h3>抽样操作</h3>
+              <span class="pill">每个分类单独随机抽样</span>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="exportFormat">导出格式</label>
+                <select id="exportFormat">
+                  <option value="csv">CSV</option>
+                  <option value="xlsx">XLSX</option>
+                  <option value="lark">飞书表格</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="exportMode">导出方式</label>
+                <select id="exportMode">
+                  <option value="sampled_only">仅导出抽中的范围和内容</option>
+                  <option value="full_with_highlight">导出全部内容，抽中行单独标记</option>
+                </select>
+              </div>
+            </div>
+            <div class="sticky-actions">
+              <button id="sampleBtn" class="primary" disabled>执行随机抽样</button>
+              <button id="exportSampleBtn" class="ghost" disabled>导出</button>
+            </div>
+            <div class="hint">CSV 会额外加一列抽样标记。</div>
+          </div>
+
+          <div class="balance-box">
+            <h4>均衡抽样设置</h4>
+            <p>按你选的字段做更均衡的随机抽样。</p>
+            <div class="field">
+              <label for="balanceField">均衡字段，多选</label>
+              <select id="balanceField" multiple disabled></select>
+            </div>
+            <div class="field">
+              <label for="balanceValues">包含哪些值，多选</label>
+              <select id="balanceValues" class="balance-values" multiple disabled></select>
+            </div>
+            <div class="hint">按住 `Command` 可多选。</div>
+          </div>
+
+          <div id="sidebarPlanSection" class="sidebar-plan-section">
+            <h3>每个类别抽多少个</h3>
+            <p>这里可以直接修改每类抽样数。</p>
+            <div class="sidebar-plan-total">
+              <div class="sidebar-total-card">
+                <span class="label">总输出总数</span>
+                <div class="value" id="sidebarPlanTotalValue">0</div>
+              </div>
+              <div class="sidebar-total-card">
+                <span class="label">总输出占比</span>
+                <div class="value" id="sidebarPlanTotalRate">0%</div>
+              </div>
+            </div>
+            <div id="sidebarPlanWrap" class="sidebar-plan-list">
+              <div class="empty">读取数据后，这里会显示每个类别抽多少个。</div>
+            </div>
+          </div>
+
+          <div class="footer-note" id="statusText">
+            尚未载入数据。
+          </div>
+        </div>
+      </aside>
+
+      <main class="sub-panels">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>数据概览</h2>
+            <p>这里看数据和抽样结果。</p>
+          </div>
+          <div class="panel-body">
+            <div class="stats">
+              <div class="stat-card">
+                <span class="label">原始总行数</span>
+                <div class="value" id="rawRowsStat">0</div>
+              </div>
+              <div class="stat-card">
+                <span class="label">当前范围行数</span>
+                <div class="value" id="rangeRowsStat">0</div>
+              </div>
+              <div class="stat-card">
+                <span class="label">抽中行数</span>
+                <div class="value" id="filteredRowsStat">0</div>
+              </div>
+              <div class="stat-card">
+                <span class="label">计划抽样数</span>
+                <div class="value" id="categoryCountStat">0</div>
+              </div>
+            </div>
+
+            <div class="preview-title">
+              <h3>全部数据预览</h3>
+              <span class="badge info" id="previewMeta">等待上传</span>
+            </div>
+            <div class="table-wrap" id="dataPreviewWrap">
+              <div class="empty">上传文件后，这里会显示当前范围下的全部数据，抽中的记录会直接标蓝。</div>
+            </div>
+          </div>
+        </section>
+    </div>
+    </div>
+  </div>
+
+  <div id="appModal" class="app-modal" aria-hidden="true">
+    <div class="app-modal-card">
+      <div class="app-modal-body">
+        <img id="appModalImage" class="app-modal-illus" src="./assets/success-pop.jpg" alt="导出成功插图" />
+        <div id="appModalSticker" class="app-modal-sticker">提示</div>
+        <h3 id="appModalTitle" class="app-modal-title">提示</h3>
+        <p id="appModalText" class="app-modal-text"></p>
+      </div>
+      <div class="app-modal-actions">
+        <a id="appModalLink" class="app-modal-link ghost" target="_blank" rel="noopener noreferrer">打开飞书表格</a>
+        <button id="appModalConfirm" class="ghost">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script>
+    const state = {
+      workbook: null,
+      workbookType: "",
+      sheetNames: [],
+      sheets: {},
+      rawRows: [],
+      rawRowCount: 0,
+      activeRows: [],
+      summaryRows: [],
+      sampledRows: [],
+      headers: [],
+      currentSheet: "",
+      currentRange: "",
+      currentFileName: "",
+      currentSourceType: "local",
+      currentLarkUrl: "",
+      sheetMetaMap: {},
+      categoryField: "",
+      balanceFields: [],
+      balanceValues: [],
+      defaultRate: 10,
+      previewPage: 1,
+      previewPageSize: 120,
+      lastPlannedTotal: 0,
+    };
+
+    const els = {
+      fileInput: document.getElementById("fileInput"),
+      larkUrlInput: document.getElementById("larkUrlInput"),
+      loadLarkBtn: document.getElementById("loadLarkBtn"),
+      sheetSelect: document.getElementById("sheetSelect"),
+      rangeInput: document.getElementById("rangeInput"),
+      categoryField: document.getElementById("categoryField"),
+      balanceField: document.getElementById("balanceField"),
+      balanceValues: document.getElementById("balanceValues"),
+      defaultSampleRate: document.getElementById("defaultSampleRate"),
+      exportFormat: document.getElementById("exportFormat"),
+      exportMode: document.getElementById("exportMode"),
+      loadRangeBtn: document.getElementById("loadRangeBtn"),
+      resetBtn: document.getElementById("resetBtn"),
+      sampleBtn: document.getElementById("sampleBtn"),
+      exportSampleBtn: document.getElementById("exportSampleBtn"),
+      statusText: document.getElementById("statusText"),
+      rawRowsStat: document.getElementById("rawRowsStat"),
+      rangeRowsStat: document.getElementById("rangeRowsStat"),
+      filteredRowsStat: document.getElementById("filteredRowsStat"),
+      categoryCountStat: document.getElementById("categoryCountStat"),
+      dataPreviewWrap: document.getElementById("dataPreviewWrap"),
+      previewMeta: document.getElementById("previewMeta"),
+      sidebarPlanSection: document.getElementById("sidebarPlanSection"),
+      sidebarPlanWrap: document.getElementById("sidebarPlanWrap"),
+      sidebarPlanTotalValue: document.getElementById("sidebarPlanTotalValue"),
+      sidebarPlanTotalRate: document.getElementById("sidebarPlanTotalRate"),
+      appModal: document.getElementById("appModal"),
+      appModalImage: document.getElementById("appModalImage"),
+      appModalSticker: document.getElementById("appModalSticker"),
+      appModalTitle: document.getElementById("appModalTitle"),
+      appModalText: document.getElementById("appModalText"),
+      appModalLink: document.getElementById("appModalLink"),
+      appModalConfirm: document.getElementById("appModalConfirm"),
+    };
+
+    function setStatus(text) {
+      els.statusText.textContent = text;
+    }
+
+    function showDialog({
+      title = "提示",
+      message = "",
+      sticker = "提示",
+      showImage = false,
+      confirmText = "关闭",
+      actionText = "",
+      actionHref = "",
+      onConfirm = null,
+    } = {}) {
+      els.appModal.classList.toggle("show-image", Boolean(showImage));
+      els.appModal.classList.add("show");
+      els.appModal.setAttribute("aria-hidden", "false");
+      els.appModalSticker.textContent = sticker;
+      els.appModalSticker.classList.toggle("hide", !sticker || sticker === "完成");
+      els.appModalTitle.textContent = title;
+      els.appModalText.textContent = message;
+      els.appModalConfirm.textContent = confirmText;
+      if (actionText && actionHref) {
+        els.appModalLink.textContent = actionText;
+        els.appModalLink.href = actionHref;
+        els.appModalLink.classList.add("show");
+        els.appModalLink.classList.remove("primary");
+        els.appModalLink.classList.add("ghost");
+      } else {
+        els.appModalLink.textContent = "";
+        els.appModalLink.removeAttribute("href");
+        els.appModalLink.classList.remove("show");
+      }
+      els.appModalConfirm.onclick = () => {
+        els.appModal.classList.remove("show");
+        els.appModal.classList.remove("show-image");
+        els.appModal.setAttribute("aria-hidden", "true");
+        if (typeof onConfirm === "function") onConfirm();
+      };
+    }
+
+    function normalizeErrorMessage(error, fallback = "请求失败。") {
+      const raw = (error && error.message) ? String(error.message) : String(error || "");
+      if (!raw) return fallback;
+      if (raw === "Failed to fetch" || /failed to fetch/i.test(raw)) {
+        return "本地导出服务刚刚断开了一下，请再试一次；如果还不行，再刷新页面。";
+      }
+      return raw;
+    }
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function postJson(url, payload) {
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload || {}),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "请求失败。");
+        }
+        return data.data;
+      } catch (error) {
+        throw new Error(normalizeErrorMessage(error));
+      }
+    }
+
+    async function downloadFile(url, payload) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload || {}),
+          });
+          if (!response.ok) {
+            let message = "导出失败。";
+            try {
+              const data = await response.json();
+              message = data.error || message;
+            } catch (error) {}
+            throw new Error(message);
+          }
+          const blob = await response.blob();
+          const disposition = response.headers.get("Content-Disposition") || "";
+          const matched = disposition.match(/filename="([^"]+)"/);
+          const fileName = matched ? matched[1] : "export";
+          const link = document.createElement("a");
+          const objectUrl = URL.createObjectURL(blob);
+          link.href = objectUrl;
+          link.download = fileName;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+          return;
+        } catch (error) {
+          if (attempt === 1 && /failed to fetch/i.test(String(error && error.message || error))) {
+            await sleep(600);
+            continue;
+          }
+          throw new Error(normalizeErrorMessage(error, "导出失败。"));
+        }
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function clamp(num, min, max) {
+      return Math.min(Math.max(num, min), max);
+    }
+
+    function normalizeValue(value) {
+      if (value === null || value === undefined) return "";
+      return String(value).trim();
+    }
+
+    function parseNumber(value) {
+      if (value === null || value === undefined || value === "") return NaN;
+      const num = Number(String(value).replace(/,/g, ""));
+      return Number.isFinite(num) ? num : NaN;
+    }
+
+    function computeSampleCount(count, rate) {
+      const normalizedRate = clamp(Number(rate || 0), 0, 100);
+      return Math.min(count, Math.max(0, Math.round((count * normalizedRate) / 100)));
+    }
+
+    function detectPreferredCategory(headers) {
+      const normalized = headers.map(h => String(h).trim().toLowerCase());
+      const candidates = [
+        "first category name",
+        "first_category_name",
+        "一级类目",
+        "一级分类",
+        "category",
+        "分类",
+      ];
+      const hit = candidates.find(c => normalized.includes(c));
+      return hit ? headers[normalized.indexOf(hit)] : headers[0] || "";
+    }
+
+    function detectPreferredBalanceField(headers) {
+      const normalized = headers.map(h => String(h).trim().toLowerCase());
+      const candidates = [
+        "发文能力",
+        "内容能力",
+        "publishing ability",
+        "posting ability",
+      ];
+      const hit = candidates.find(c => normalized.includes(c));
+      return hit ? headers[normalized.indexOf(hit)] : "";
+    }
+
+    function buildSelectOptions(selectEl, values, placeholder) {
+      selectEl.innerHTML = "";
+      if (!values.length) {
+        const option = document.createElement("option");
+        option.textContent = placeholder || "暂无可选项";
+        option.value = "";
+        selectEl.appendChild(option);
+        selectEl.disabled = true;
+        return;
+      }
+      values.forEach(value => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        selectEl.appendChild(option);
+      });
+      selectEl.disabled = false;
+    }
+
+    function objectRowsFromWorksheet(worksheet, range) {
+      const sheetRef = worksheet["!ref"];
+      if (!sheetRef) return [];
+      let finalRange = sheetRef;
+      if (range && range.trim()) {
+        try {
+          XLSX.utils.decode_range(range.trim());
+          finalRange = range.trim();
+        } catch (error) {
+          throw new Error("单元格范围格式不正确，请使用类似 A1:H200 的格式。");
+        }
+      }
+      const rows = XLSX.utils.sheet_to_json(worksheet, {
+        range: finalRange,
+        defval: "",
+        raw: false,
+      });
+      return rows.filter(row => Object.entries(row || {}).some(([key, value]) => {
+        if (String(key || "").startsWith("__")) return false;
+        return String(value ?? "").trim() !== "";
+      }));
+    }
+
+    function rowsToWorksheet(rows) {
+      return XLSX.utils.json_to_sheet(rows || []);
+    }
+
+    function refreshStats() {
+      els.rawRowsStat.textContent = state.rawRowCount;
+      els.rangeRowsStat.textContent = state.activeRows.length;
+      els.filteredRowsStat.textContent = state.sampledRows.length;
+      els.categoryCountStat.textContent = String(state.lastPlannedTotal || state.summaryRows.reduce((sum, item) => sum + Number(item.sampleCount || 0), 0));
+    }
+
+    function refreshPlanTotals() {
+      const totalRows = state.activeRows.length;
+      const totalSampleCount = state.summaryRows.reduce((sum, item) => sum + Number(item.sampleCount || 0), 0);
+      els.sidebarPlanTotalValue.textContent = String(totalSampleCount);
+      els.sidebarPlanTotalRate.textContent = totalRows ? `${((totalSampleCount / totalRows) * 100).toFixed(2)}%` : "0%";
+    }
+
+    function renderTable(target, rows, options = {}) {
+      if (!rows || !rows.length) {
+        target.innerHTML = '<div class="empty">' + (options.emptyText || "暂无数据") + "</div>";
+        return;
+      }
+      const columns = options.columns || Object.keys(rows[0]);
+      const limit = options.limit || rows.length;
+      const body = rows.slice(0, limit).map(row => {
+        const rowClass = options.rowClassName ? options.rowClassName(row) : "";
+        return `<tr class="${rowClass}">` + columns.map(col => {
+          return "<td>" + escapeHtml(row[col]) + "</td>";
+        }).join("") + "</tr>";
+      }).join("");
+      const head = "<tr>" + columns.map(col => "<th>" + escapeHtml(col) + "</th>").join("") + "</tr>";
+      target.innerHTML = '<table><thead>' + head + '</thead><tbody>' + body + '</tbody></table>';
+    }
+
+    function renderDataPreview() {
+      const sampledIds = new Set(state.sampledRows.map(row => row.__rowId).filter(Boolean));
+      const sortedRows = [
+        ...state.activeRows.filter(row => sampledIds.has(row.__rowId)),
+        ...state.activeRows.filter(row => !sampledIds.has(row.__rowId)),
+      ].map(row => ({
+        "__抽样标记": sampledIds.has(row.__rowId) ? "已抽中" : "",
+        ...row,
+      }));
+      const columns = ["__抽样标记", ...state.headers];
+      const totalPages = Math.max(1, Math.ceil(sortedRows.length / state.previewPageSize));
+      state.previewPage = Math.min(Math.max(1, state.previewPage), totalPages);
+      const start = (state.previewPage - 1) * state.previewPageSize;
+      const currentRows = sortedRows.slice(start, start + state.previewPageSize);
+      renderTable(els.dataPreviewWrap, currentRows, {
+        columns,
+        emptyText: "当前范围没有可用数据。",
+        rowClassName: row => row["__抽样标记"] ? "sampled-row" : "",
+      });
+      els.dataPreviewWrap.insertAdjacentHTML("beforeend", `
+        <div class="row" style="justify-content:space-between;padding:12px 14px;border-top:1px dashed rgba(241, 207, 222, 0.95);">
+          <div class="hint">当前只预览第 ${state.previewPage} / ${totalPages} 页，每页 ${state.previewPageSize} 行，共 ${sortedRows.length} 行。</div>
+          <div class="sticky-actions">
+            <button class="ghost" type="button" ${state.previewPage <= 1 ? "disabled" : ""} data-preview-page="prev">上一页</button>
+            <button class="ghost" type="button" ${state.previewPage >= totalPages ? "disabled" : ""} data-preview-page="next">下一页</button>
+          </div>
+        </div>
+      `);
+      els.dataPreviewWrap.querySelectorAll("[data-preview-page]").forEach(button => {
+        button.addEventListener("click", () => {
+          state.previewPage += button.dataset.previewPage === "prev" ? -1 : 1;
+          renderDataPreview();
+        });
+      });
+    }
+
+    function getSelectedMultiValues(selectEl) {
+      return Array.from(selectEl.selectedOptions || []).map(option => option.value).filter(Boolean);
+    }
+
+    function getExportPayload() {
+      return {
+        format: els.exportFormat.value,
+        mode: els.exportMode.value,
+        headers: state.headers,
+        activeRows: state.activeRows,
+        sampledRowIds: state.sampledRows.map(row => row.__rowId).filter(Boolean),
+        fileName: state.currentFileName || "抽样导出",
+        title: `${(state.currentFileName || "抽样导出").replace(/\.[^.]+$/, "")}_${els.exportMode.value === "sampled_only" ? "仅抽中" : "全部带标记"}`,
+      };
+    }
+
+    function getBalanceSelectionsByField() {
+      const selectedTokens = state.balanceValues || [];
+      const map = new Map();
+      selectedTokens.forEach(token => {
+        const [field, value] = String(token).split("::");
+        if (!field || value === undefined) return;
+        if (!map.has(field)) map.set(field, new Set());
+        map.get(field).add(value);
+      });
+      return map;
+    }
+
+    function updateBalanceValueOptions() {
+      const selectedFields = state.balanceFields || [];
+      const selected = new Set(state.balanceValues || []);
+      els.balanceValues.innerHTML = "";
+      if (!selectedFields.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "请先选择均衡字段";
+        els.balanceValues.appendChild(option);
+        els.balanceValues.disabled = true;
+        return;
+      }
+
+      const options = [];
+      selectedFields.forEach(field => {
+        getFieldDistinctValues(field).forEach(value => {
+          options.push({
+            value: `${field}::${value}`,
+            label: `${field}：${value}`,
+          });
+        });
+      });
+
+      if (!options.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "当前字段没有可选值";
+        els.balanceValues.appendChild(option);
+        els.balanceValues.disabled = true;
+        return;
+      }
+
+      els.balanceValues.disabled = false;
+      options.forEach(item => {
+        const option = document.createElement("option");
+        option.value = item.value;
+        option.textContent = item.label;
+        option.selected = selected.has(item.value);
+        els.balanceValues.appendChild(option);
+      });
+    }
+
+    function getFieldDistinctValues(field) {
+      if (!field) return [];
+      const values = Array.from(new Set(
+        state.activeRows
+          .map(row => normalizeValue(row[field]))
+          .filter(value => value !== "")
+      ));
+      values.sort((a, b) => String(a).localeCompare(String(b), "zh-CN", { numeric: true }));
+      return values.slice(0, 500);
+    }
+
+    function updateMeta() {
+      const meta = [];
+      if (state.currentFileName) meta.push(state.currentFileName);
+      if (state.currentSheet) meta.push("工作表: " + state.currentSheet);
+      if (state.currentRange) meta.push("范围: " + state.currentRange);
+      if (state.currentSourceType === "lark") meta.push("来源: 飞书在线");
+      els.previewMeta.textContent = meta.length ? meta.join(" | ") : "等待上传";
+    }
+
+    function populateFieldSelectors() {
+      buildSelectOptions(els.categoryField, state.headers, "选择分类字段");
+      const preferred = detectPreferredCategory(state.headers);
+      state.categoryField = preferred;
+      els.categoryField.value = preferred;
+      els.balanceField.innerHTML = "";
+      state.headers.forEach(header => {
+        const option = document.createElement("option");
+        option.value = header;
+        option.textContent = header;
+        els.balanceField.appendChild(option);
+      });
+      const preferredBalance = detectPreferredBalanceField(state.headers);
+      state.balanceFields = preferredBalance ? [preferredBalance] : [];
+      Array.from(els.balanceField.options).forEach(option => {
+        option.selected = state.balanceFields.includes(option.value);
+      });
+      els.balanceField.disabled = !state.headers.length;
+      updateBalanceValueOptions();
+    }
+
+    function buildSummaryRows() {
+      const categoryField = state.categoryField || els.categoryField.value;
+      state.categoryField = categoryField;
+      if (!categoryField) {
+        showDialog({ title: "还差一步", message: "请先选择分类字段。", sticker: "提示" });
+        return false;
+      }
+      const total = state.activeRows.length;
+      if (!total) {
+        showDialog({ title: "没有数据", message: "当前范围没有数据，无法执行抽样。", sticker: "提示" });
+        return false;
+      }
+      const grouped = new Map();
+      state.activeRows.forEach((row, index) => {
+        const key = normalizeValue(row[categoryField]) || "(空值)";
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push({ ...row, __sourceIndex: index + 1 });
+      });
+      const defaultRate = clamp(Number(els.defaultSampleRate.value || 10), 0, 100);
+      state.defaultRate = defaultRate;
+      state.summaryRows = Array.from(grouped.entries())
+        .map(([category, rows]) => {
+          const count = rows.length;
+          const share = total ? (count / total) * 100 : 0;
+          const rate = defaultRate;
+          const sampleCount = computeSampleCount(count, rate);
+          return {
+            category,
+            count,
+            share,
+            rate,
+            sampleCount,
+            rows,
+          };
+        })
+        .sort((a, b) => b.count - a.count || String(a.category).localeCompare(String(b.category), "zh-CN"));
+      refreshStats();
+      refreshPlanTotals();
+      return true;
+    }
+
+    function renderSidebarPlan() {
+      if (!state.summaryRows.length) {
+        els.sidebarPlanWrap.innerHTML = '<div class="empty">读取数据后，这里会显示每个类别抽多少个。</div>';
+        refreshPlanTotals();
+        return;
+      }
+      const totalRows = state.activeRows.length;
+      const totalSampleCount = state.summaryRows.reduce((sum, item) => sum + Number(item.sampleCount || 0), 0);
+      const rowsHtml = state.summaryRows.map((item, index) => `
+        <tr>
+          <td>${escapeHtml(item.category)}</td>
+          <td class="num">${item.count}</td>
+          <td class="num">${totalRows ? item.share.toFixed(2) : "0.00"}%</td>
+          <td class="num">
+            <input
+              type="number"
+              class="sidebar-plan-input"
+              min="0"
+              max="${item.count}"
+              step="1"
+              value="${item.sampleCount}"
+              data-sidebar-sample-index="${index}"
+            />
+          </td>
+          <td class="num">${totalSampleCount ? ((item.sampleCount / totalSampleCount) * 100).toFixed(2) : "0.00"}%</td>
+        </tr>
+      `).join("");
+
+      els.sidebarPlanWrap.innerHTML = `
+        <table class="sidebar-plan-table">
+          <thead>
+            <tr>
+              <th>类别</th>
+              <th class="num">该类条数</th>
+              <th class="num">占底表</th>
+              <th class="num">抽样个数</th>
+              <th class="num">占输出</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="total-row">
+              <td>总计</td>
+              <td class="num">${totalRows}</td>
+              <td class="num">100.00%</td>
+              <td class="num">${totalSampleCount}</td>
+              <td class="num">${totalRows ? ((totalSampleCount / totalRows) * 100).toFixed(2) : "0.00"}%</td>
+            </tr>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      `;
+
+      els.sidebarPlanWrap.querySelectorAll("input[data-sidebar-sample-index]").forEach(input => {
+        input.addEventListener("change", event => {
+          updateSampleCountByIndex(Number(event.target.dataset.sidebarSampleIndex), event.target.value);
+        });
+      });
+      refreshPlanTotals();
+    }
+
+    function updateSampleCountByIndex(index, rawValue) {
+      const item = state.summaryRows[index];
+      if (!item) return;
+      const sampleCount = Math.min(item.count, Math.max(0, Math.round(Number(rawValue || 0))));
+      item.sampleCount = sampleCount;
+      item.rate = item.count ? Number(((sampleCount / item.count) * 100).toFixed(2)) : 0;
+      state.sampledRows = [];
+      els.exportSampleBtn.disabled = true;
+      refreshStats();
+      renderSidebarPlan();
+      renderDataPreview();
+    }
+
+    function regenerateSummaryIfPossible() {
+      if (!state.activeRows.length || !(state.categoryField || els.categoryField.value)) {
+        state.summaryRows = [];
+        refreshStats();
+        renderSidebarPlan();
+        return;
+      }
+      buildSummaryRows();
+      els.sampleBtn.disabled = false;
+      renderSidebarPlan();
+    }
+
+    function shuffle(array) {
+      const cloned = [...array];
+      for (let i = cloned.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [cloned[i], cloned[j]] = [cloned[j], cloned[i]];
+      }
+      return cloned;
+    }
+
+    function pickBalancedRows(rows, sampleCount) {
+      if (!sampleCount) return [];
+      const balanceFields = state.balanceFields || [];
+      if (!balanceFields.length) {
+        return shuffle(rows).slice(0, sampleCount);
+      }
+      const selectedByField = getBalanceSelectionsByField();
+      const eligibleRows = rows.filter(row => balanceFields.every(field => {
+        const allowed = selectedByField.get(field);
+        if (!allowed || !allowed.size) return true;
+        return allowed.has(normalizeValue(row[field]));
+      }));
+      if (!eligibleRows.length) {
+        return shuffle(rows).slice(0, sampleCount);
+      }
+      const grouped = new Map();
+      eligibleRows.forEach(row => {
+        const key = balanceFields.map(field => normalizeValue(row[field]) || "(空值)").join("｜");
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(row);
+      });
+      const buckets = Array.from(grouped.entries()).map(([key, bucketRows]) => ({
+        value: key,
+        rows: shuffle(bucketRows),
+        take: 0,
+      }));
+      if (!buckets.length) {
+        return shuffle(rows).slice(0, sampleCount);
+      }
+
+      let remaining = Math.min(sampleCount, buckets.reduce((sum, bucket) => sum + bucket.rows.length, 0));
+
+      for (let i = 0; i < buckets.length && remaining > 0; i++) {
+        buckets[i].take += 1;
+        remaining -= 1;
+      }
+
+      while (remaining > 0) {
+        const progressed = buckets
+          .sort((a, b) => {
+            const ratioA = a.rows.length ? a.take / a.rows.length : 999;
+            const ratioB = b.rows.length ? b.take / b.rows.length : 999;
+            return ratioA - ratioB;
+          })
+          .some(bucket => {
+            if (bucket.take < bucket.rows.length) {
+              bucket.take += 1;
+              remaining -= 1;
+              return true;
+            }
+            return false;
+          });
+        if (!progressed) break;
+      }
+
+      const picked = buckets.flatMap(bucket => bucket.rows.slice(0, bucket.take));
+      if (picked.length >= sampleCount) {
+        return picked.slice(0, sampleCount);
+      }
+      const pickedIds = new Set(picked.map(row => row.__rowId));
+      const fallbackRows = shuffle(rows.filter(row => !pickedIds.has(row.__rowId)));
+      return picked.concat(fallbackRows.slice(0, sampleCount - picked.length));
+    }
+
+    function sampleRowsByCategory() {
+      if (!state.summaryRows.length) {
+        if (!buildSummaryRows()) return;
+      }
+      if (!state.summaryRows.length) {
+        showDialog({ title: "没有可抽样数据", message: "当前没有可抽样的数据。", sticker: "提示" });
+        return;
+      }
+      const plannedTotal = state.summaryRows.reduce((sum, item) => sum + Number(item.sampleCount || 0), 0);
+      state.lastPlannedTotal = plannedTotal;
+      const sampledMap = new Map();
+      state.summaryRows.forEach(item => {
+        const pickedRows = pickBalancedRows(item.rows, item.sampleCount);
+        const picked = pickedRows.map((row, idx) => ({
+          __分类: item.category,
+          __分类内抽样序号: idx + 1,
+          ...row,
+        }));
+        picked.forEach(row => {
+          if (!sampledMap.has(row.__rowId)) sampledMap.set(row.__rowId, row);
+        });
+      });
+
+      if (sampledMap.size < plannedTotal) {
+        const currentCategoryField = state.categoryField || els.categoryField.value;
+        const remainingRows = shuffle(state.activeRows.filter(row => !sampledMap.has(row.__rowId)));
+        remainingRows.slice(0, plannedTotal - sampledMap.size).forEach(row => {
+          sampledMap.set(row.__rowId, {
+            __分类: normalizeValue(row[currentCategoryField]) || "(空值)",
+            __分类内抽样序号: "补齐",
+            ...row,
+          });
+        });
+      }
+
+      state.sampledRows = Array.from(sampledMap.values()).slice(0, plannedTotal);
+      renderDataPreview();
+      els.exportSampleBtn.disabled = !state.sampledRows.length;
+      refreshStats();
+      if (state.sampledRows.length !== plannedTotal) {
+        showDialog({
+          title: "抽样没补齐",
+          message: `计划抽样 ${plannedTotal} 行，实际只抽到 ${state.sampledRows.length} 行。这个结果不对，请继续发我截图，我会接着修。`,
+          sticker: "出错了",
+        });
+      }
+    }
+
+    async function exportData() {
+      if (!state.sampledRows.length) {
+        showDialog({ title: "还没抽中记录", message: "当前没有抽中的记录可导出。", sticker: "提示" });
+        return;
+      }
+      const payload = getExportPayload();
+      if (payload.format === "lark") {
+        const data = await postJson("/api/lark/export-sheet", payload);
+        if (data.url) {
+          window.open(data.url, "_blank");
+        }
+        showDialog({
+          title: "导出成功",
+          message: data.style_warning
+            ? `已导出到飞书表格。\n${data.style_warning}`
+            : (data.url ? "已导出到飞书表格，并为抽中行加好了底色标记。" : "已导出到飞书表格。"),
+          sticker: "",
+          showImage: true,
+          confirmText: "关闭",
+          actionText: data.url ? "打开飞书表格" : "",
+          actionHref: data.url || "",
+        });
+        return;
+      }
+      await downloadFile("/api/export/download", payload);
+      showDialog({
+        title: "导出成功",
+        message: payload.mode === "sampled_only"
+          ? `已导出 ${payload.format.toUpperCase()}，里面只包含抽中的记录。`
+          : `已导出 ${payload.format.toUpperCase()}，并按原顺序保留全部内容，抽中行也已标记。`,
+        sticker: "",
+        showImage: true,
+        confirmText: "关闭",
+      });
+    }
+
+    function hydrateRows(rows, options = {}) {
+      const hydratedRows = (rows || []).filter(row => Object.entries(row || {}).some(([key, value]) => {
+        if (String(key || "").startsWith("__")) return false;
+        return String(value ?? "").trim() !== "";
+      })).map((row, index) => ({
+        __rowId: row.__rowId || `row-${index + 1}`,
+        ...row,
+      }));
+      state.previewPage = 1;
+      state.activeRows = hydratedRows;
+      state.headers = hydratedRows.length ? Object.keys(hydratedRows[0]).filter(key => !key.startsWith("__")) : [];
+      state.currentRange = options.actualRange || state.currentRange;
+      state.rawRowCount = Number(options.rawRowCount || rows.length || 0);
+      if (options.sheetName) state.currentSheet = options.sheetName;
+      if (options.fileName) state.currentFileName = options.fileName;
+      populateFieldSelectors();
+      updateMeta();
+      state.summaryRows = [];
+      state.sampledRows = [];
+      regenerateSummaryIfPossible();
+      els.exportSampleBtn.disabled = true;
+      refreshStats();
+      renderDataPreview();
+      renderSidebarPlan();
+    }
+
+    function loadCurrentRange() {
+      try {
+        if (!state.currentSheet) return;
+        if (state.currentSourceType === "lark") {
+          loadCurrentRangeFromLark();
+          return;
+        }
+        const worksheet = state.sheets[state.currentSheet];
+        const range = els.rangeInput.value.trim();
+        const rows = objectRowsFromWorksheet(worksheet, range);
+        state.currentRange = range || (worksheet["!ref"] || "");
+        state.rawRows = objectRowsFromWorksheet(worksheet, "");
+        state.rawRowCount = state.rawRows.length;
+        hydrateRows(rows, {
+          actualRange: state.currentRange,
+          rawRowCount: state.rawRows.length,
+          sheetName: state.currentSheet,
+          fileName: state.currentFileName,
+        });
+        els.loadRangeBtn.disabled = false;
+        setStatus(`已加载 ${state.currentFileName}，当前工作表 ${state.currentSheet}，范围 ${state.currentRange || "全部"}，共 ${state.activeRows.length} 行。`);
+      } catch (error) {
+        showDialog({ title: "读取失败", message: error.message || "读取范围失败。", sticker: "出错了" });
+      }
+    }
+
+    async function loadWorkbookFromLarkUrl() {
+      const url = els.larkUrlInput.value.trim();
+      if (!url) {
+        showDialog({ title: "还没填链接", message: "请先输入飞书表格链接。", sticker: "提示" });
+        return;
+      }
+      els.loadLarkBtn.disabled = true;
+      setStatus("正在读取飞书工作簿信息...");
+      try {
+        const data = await postJson("/api/lark/workbook-info", { url });
+        state.currentSourceType = "lark";
+        state.currentLarkUrl = url;
+        state.currentFileName = "飞书在线表格";
+        state.sheetMetaMap = Object.fromEntries((data.sheets || []).map(item => [item.sheet_id, item]));
+        state.sheetNames = (data.sheets || []).map(item => item.sheet_name);
+        state.currentSheet = data.sheets?.[0]?.sheet_name || "";
+        buildSelectOptions(els.sheetSelect, state.sheetNames, "选择工作表");
+        els.sheetSelect.value = state.currentSheet;
+        els.sheetSelect.disabled = !state.sheetNames.length;
+        els.loadRangeBtn.disabled = !state.currentSheet;
+        els.fileInput.value = "";
+        els.rangeInput.value = "";
+        setStatus(`已读取飞书工作簿，共 ${data.sheets?.length || 0} 个工作表。请选择工作表和范围后读取。`);
+        updateMeta();
+        if (state.currentSheet) {
+          await loadCurrentRangeFromLark();
+        }
+      } catch (error) {
+        showDialog({ title: "飞书读取失败", message: error.message || "飞书链接读取失败。", sticker: "出错了" });
+        setStatus("飞书链接读取失败。");
+      } finally {
+        els.loadLarkBtn.disabled = false;
+      }
+    }
+
+    async function loadCurrentRangeFromLark() {
+      const url = state.currentLarkUrl || els.larkUrlInput.value.trim();
+      const targetMeta = Object.values(state.sheetMetaMap).find(item => item.sheet_name === state.currentSheet);
+      if (!url || !targetMeta) return;
+      els.loadRangeBtn.disabled = true;
+      setStatus(`正在读取飞书工作表 ${state.currentSheet}...`);
+      try {
+        const data = await postJson("/api/lark/load-sheet", {
+          url,
+          sheetId: targetMeta.sheet_id,
+          range: els.rangeInput.value.trim(),
+        });
+        state.currentSourceType = "lark";
+        state.currentLarkUrl = url;
+        state.currentRange = data.actual_range || els.rangeInput.value.trim();
+        els.rangeInput.value = state.currentRange || "";
+        state.rawRows = [];
+        hydrateRows(data.rows || [], {
+          actualRange: state.currentRange,
+          rawRowCount: data.row_count || 0,
+          sheetName: data.sheet?.sheet_name || state.currentSheet,
+          fileName: "飞书在线表格",
+        });
+        els.loadRangeBtn.disabled = false;
+        setStatus(`已读取飞书工作表 ${state.currentSheet}，范围 ${state.currentRange || "全部"}，当前 ${state.activeRows.length} 行。`);
+      } catch (error) {
+        showDialog({ title: "飞书读取失败", message: error.message || "飞书表格读取失败。", sticker: "出错了" });
+        setStatus("飞书表格读取失败。");
+        els.loadRangeBtn.disabled = false;
+      }
+    }
+
+    function resetAll() {
+      state.workbook = null;
+      state.workbookType = "";
+      state.sheetNames = [];
+      state.sheets = {};
+      state.rawRows = [];
+      state.rawRowCount = 0;
+      state.activeRows = [];
+      state.summaryRows = [];
+      state.sampledRows = [];
+      state.headers = [];
+      state.currentSheet = "";
+      state.currentRange = "";
+      state.currentFileName = "";
+      state.currentSourceType = "local";
+      state.currentLarkUrl = "";
+      state.sheetMetaMap = {};
+      state.categoryField = "";
+      state.balanceFields = [];
+      state.balanceValues = [];
+      buildSelectOptions(els.sheetSelect, [], "请先上传文件");
+      buildSelectOptions(els.categoryField, [], "请先读取数据");
+      buildSelectOptions(els.balanceField, [], "请先读取数据");
+      els.sheetSelect.disabled = true;
+      els.categoryField.disabled = true;
+      els.balanceField.disabled = true;
+      els.balanceValues.innerHTML = '<option>请先读取数据</option>';
+      els.balanceValues.disabled = true;
+      els.rangeInput.value = "";
+      els.fileInput.value = "";
+      els.larkUrlInput.value = "";
+      els.loadRangeBtn.disabled = true;
+      els.loadLarkBtn.disabled = false;
+      els.sampleBtn.disabled = true;
+      els.exportSampleBtn.disabled = true;
+      refreshStats();
+      refreshPlanTotals();
+      updateMeta();
+      renderTable(els.dataPreviewWrap, [], { emptyText: "上传文件后，这里会显示当前范围下的全部数据，抽中的记录会直接标蓝。" });
+      renderSidebarPlan();
+      setStatus("尚未载入数据。");
+    }
+
+    async function handleFileUpload(file) {
+      const ext = file.name.split(".").pop().toLowerCase();
+      state.currentFileName = file.name;
+      state.currentSourceType = "local";
+      state.currentLarkUrl = "";
+      state.sheetMetaMap = {};
+      const buffer = await file.arrayBuffer();
+      let workbook;
+
+      if (["xlsx", "xls"].includes(ext)) {
+        workbook = XLSX.read(buffer, { type: "array" });
+      } else if (["csv", "tsv", "txt"].includes(ext)) {
+        const text = new TextDecoder("utf-8").decode(buffer);
+        const parsed = Papa.parse(text, {
+          header: true,
+          skipEmptyLines: true,
+          delimiter: ext === "tsv" ? "\t" : "",
+        });
+        workbook = XLSX.utils.book_new();
+        const sheet = XLSX.utils.json_to_sheet(parsed.data);
+        XLSX.utils.book_append_sheet(workbook, sheet, "Sheet1");
+      } else if (ext === "json") {
+        const text = new TextDecoder("utf-8").decode(buffer);
+        const json = JSON.parse(text);
+        const rows = Array.isArray(json) ? json : Array.isArray(json.data) ? json.data : [];
+        workbook = XLSX.utils.book_new();
+        const sheet = XLSX.utils.json_to_sheet(rows);
+        XLSX.utils.book_append_sheet(workbook, sheet, "Sheet1");
+      } else {
+        throw new Error("暂不支持该文件格式，请上传 CSV、TSV、XLSX、XLS 或 JSON。");
+      }
+
+      state.workbook = workbook;
+      state.sheetNames = workbook.SheetNames || [];
+      state.sheets = workbook.Sheets || {};
+      state.currentSheet = state.sheetNames[0] || "";
+      state.rawRowCount = 0;
+
+      buildSelectOptions(els.sheetSelect, state.sheetNames, "选择工作表");
+      els.sheetSelect.value = state.currentSheet;
+      els.sheetSelect.disabled = !state.sheetNames.length;
+      els.loadRangeBtn.disabled = !state.currentSheet;
+      setStatus(`文件已上传：${file.name}。请选择工作表与范围后读取。`);
+      loadCurrentRange();
+    }
+
+    els.fileInput.addEventListener("change", async event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        els.larkUrlInput.value = "";
+        await handleFileUpload(file);
+      } catch (error) {
+        showDialog({ title: "文件读取失败", message: error.message || "文件读取失败。", sticker: "出错了" });
+        resetAll();
+      }
+    });
+
+    els.loadLarkBtn.addEventListener("click", async () => {
+      await loadWorkbookFromLarkUrl();
+    });
+
+    els.sheetSelect.addEventListener("change", event => {
+      state.currentSheet = event.target.value;
+      if (state.currentSourceType === "lark") {
+        els.rangeInput.value = "";
+        loadCurrentRangeFromLark();
+      } else {
+        const worksheet = state.sheets[state.currentSheet];
+        els.rangeInput.value = worksheet && worksheet["!ref"] ? worksheet["!ref"] : "";
+        loadCurrentRange();
+      }
+    });
+
+    els.loadRangeBtn.addEventListener("click", () => {
+      loadCurrentRange();
+    });
+
+    els.resetBtn.addEventListener("click", () => {
+      resetAll();
+    });
+
+    els.categoryField.addEventListener("change", event => {
+      state.categoryField = event.target.value;
+      state.summaryRows = [];
+      state.sampledRows = [];
+      state.previewPage = 1;
+      regenerateSummaryIfPossible();
+      els.exportSampleBtn.disabled = true;
+      refreshStats();
+      renderDataPreview();
+      renderSidebarPlan();
+    });
+
+    els.balanceField.addEventListener("change", () => {
+      state.balanceFields = getSelectedMultiValues(els.balanceField);
+      state.balanceValues = [];
+      state.sampledRows = [];
+      state.previewPage = 1;
+      updateBalanceValueOptions();
+      els.exportSampleBtn.disabled = true;
+      refreshStats();
+      renderDataPreview();
+      renderSidebarPlan();
+    });
+
+    els.balanceValues.addEventListener("change", () => {
+      state.balanceValues = getSelectedMultiValues(els.balanceValues);
+      state.sampledRows = [];
+      state.previewPage = 1;
+      els.exportSampleBtn.disabled = true;
+      refreshStats();
+      renderDataPreview();
+      renderSidebarPlan();
+    });
+
+    els.defaultSampleRate.addEventListener("input", () => {
+      regenerateSummaryIfPossible();
+      state.sampledRows = [];
+      state.previewPage = 1;
+      els.exportSampleBtn.disabled = true;
+      refreshStats();
+      renderDataPreview();
+      renderSidebarPlan();
+    });
+
+    els.sampleBtn.addEventListener("click", () => {
+      sampleRowsByCategory();
+      state.previewPage = 1;
+      renderDataPreview();
+      setStatus(
+        state.sampledRows.length === state.lastPlannedTotal
+          ? `随机抽样已完成，计划 ${state.lastPlannedTotal} 行，实际 ${state.sampledRows.length} 行。`
+          : `随机抽样未补齐，计划 ${state.lastPlannedTotal} 行，实际只有 ${state.sampledRows.length} 行。`
+      );
+    });
+
+    els.exportSampleBtn.addEventListener("click", async () => {
+      try {
+        await exportData();
+      } catch (error) {
+        showDialog({ title: "导出失败", message: error.message || "导出失败。", sticker: "出错了" });
+      }
+    });
+
+    els.appModal.addEventListener("click", event => {
+      if (event.target === els.appModal) {
+        els.appModalConfirm.click();
+      }
+    });
+
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape" && els.appModal.classList.contains("show")) {
+        els.appModalConfirm.click();
+      }
+    });
+
+    resetAll();
+  </script>
+</body>
+</html>

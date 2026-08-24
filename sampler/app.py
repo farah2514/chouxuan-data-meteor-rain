@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 import xlsxwriter
 
@@ -280,15 +280,10 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(raw)
 
     def send_file(self, raw, content_type, filename):
-        safe_filename = "".join(ch if ord(ch) < 128 and ch not in {'"', "\\", "\r", "\n"} else "_" for ch in filename) or "export"
-        encoded_filename = quote(filename.encode("utf-8"))
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(raw)))
-        self.send_header(
-            "Content-Disposition",
-            f"attachment; filename=\"{safe_filename}\"; filename*=UTF-8''{encoded_filename}",
-        )
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.end_headers()
         self.wfile.write(raw)
 

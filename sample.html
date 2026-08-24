@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>本地提图示例页</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 40px;
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+      img {
+        width: 100%;
+        border-radius: 18px;
+        display: block;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.1);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>本地提图示例页</h1>
+      <p>这个页面专门用来测试网页拼图工具的“输入链接提取图片”功能。</p>
+      <div class="grid">
+        <img src="/samples/demo-1.svg" alt="演示图一" />
+        <img src="/samples/demo-2.svg" alt="演示图二" />
+        <img src="/samples/demo-3.svg" alt="演示图三" />
+      </div>
+    </div>
+  </body>
+  </html>

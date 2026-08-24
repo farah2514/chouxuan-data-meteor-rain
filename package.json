@@ -1,0 +1,15 @@
+{
+  "name": "image-collage-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "图片拼图网页，支持普通网页与 TikTok 动态提图",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "gifenc": "^1.0.3",
+    "playwright": "^1.55.0",
+    "sortablejs": "^1.15.7"
+  }
+}

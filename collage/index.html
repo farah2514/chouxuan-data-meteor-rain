@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>网页拼图工具</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">图片上传 + 链接提图 + 拼图导出</p>
+          <div class="hero-badges">
+            <span>手绘感</span>
+            <span>小青蛙</span>
+            <span>浅色系</span>
+          </div>
+          <h1>青蛙拼图小屋</h1>
+          <p class="subtext">
+            直接上传多张图片，或者输入一个公开网页链接提取图片，再切换横拼或竖拼并导出成 PNG。
+          </p>
+          <p class="subtext soft">
+            这一版用了软乎乎的小青蛙配色，像毛绒玩偶和手账贴纸一样轻松可爱。
+          </p>
+        </div>
+        <div class="hero-figure" aria-hidden="true">
+          <div class="cloud cloud-left"></div>
+          <div class="cloud cloud-right"></div>
+          <div class="frog-card">
+            <div class="frog-hat"></div>
+            <div class="frog-head">
+              <div class="frog-eye left"><span></span></div>
+              <div class="frog-eye right"><span></span></div>
+              <div class="frog-cheek left"></div>
+              <div class="frog-cheek right"></div>
+              <div class="frog-mouth"></div>
+            </div>
+            <div class="frog-hoodie"></div>
+          </div>
+          <div class="hero-note">
+            <span>适合做商品图、文章配图、内容长图</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel">
+          <div class="panel-title">
+            <h2>导入图片</h2>
+            <span class="panel-chip">呱</span>
+          </div>
+
+          <div class="upload-box" id="dropZone">
+            <input id="fileInput" type="file" accept="image/*" multiple />
+            <p>上传图片</p>
+            <span>拖拽或点击选择</span>
+          </div>
+
+          <div class="url-block">
+            <label for="pageUrl">链接提图</label>
+            <div class="url-row">
+              <textarea
+                id="pageUrl"
+                placeholder="一行一个链接，或用逗号分隔多个链接"
+              ></textarea>
+              <button id="extractBtn" class="primary">提取图片</button>
+            </div>
+            <div class="assist-row">
+              <button id="assistExtractBtn" class="ghost" type="button">辅助提图</button>
+              <button id="assistFinishBtn" class="ghost hidden" type="button">继续识别</button>
+              <button id="assistCancelBtn" class="ghost hidden" type="button">取消辅助</button>
+            </div>
+          </div>
+
+          <div class="status" id="statusText">上传图片或粘贴链接开始</div>
+
+          <div class="section-head">
+            <h3>候选图片</h3>
+            <button id="clearBtn" class="ghost danger">清空</button>
+          </div>
+          <div id="candidateGrid" class="image-grid empty">
+            <p>图片会显示在这里</p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <h2>拼图设置</h2>
+            <span class="panel-chip">♪</span>
+          </div>
+
+          <div class="control-group">
+            <label>导出模式</label>
+            <div class="segmented">
+              <button class="segment active" data-export-mode="png">PNG 拼图</button>
+              <button class="segment" data-export-mode="gif">GIF 动图</button>
+            </div>
+          </div>
+
+          <div id="pngSettings" class="mode-settings">
+            <div class="control-group">
+              <label>拼接方向</label>
+              <div class="segmented">
+                <button class="segment active" data-layout="horizontal">横拼</button>
+                <button class="segment" data-layout="vertical">竖拼</button>
+              </div>
+            </div>
+
+            <div class="control-group">
+              <label for="gapRange">图片间距 <span id="gapValue">16px</span></label>
+              <input id="gapRange" type="range" min="0" max="48" value="16" />
+            </div>
+
+            <div class="control-group">
+              <label for="paddingRange">外边距 <span id="paddingValue">24px</span></label>
+              <input id="paddingRange" type="range" min="0" max="80" value="24" />
+            </div>
+
+            <div class="control-group">
+              <label for="radiusRange">圆角 <span id="radiusValue">18px</span></label>
+              <input id="radiusRange" type="range" min="0" max="40" value="18" />
+            </div>
+
+            <div class="control-group">
+              <label for="backgroundColor">背景色</label>
+              <input id="backgroundColor" type="color" value="#f5f7fb" />
+            </div>
+
+            <div class="control-group">
+              <label>导出倍数</label>
+              <div class="segmented">
+                <button class="segment active" data-png-scale="1">原图 1x</button>
+                <button class="segment" data-png-scale="2">放大 2x</button>
+                <button class="segment" data-png-scale="3">放大 3x</button>
+              </div>
+            </div>
+
+            <div class="control-group inline">
+              <label class="checkbox">
+                <input id="shadowToggle" type="checkbox" checked />
+                <span>卡片阴影</span>
+              </label>
+              <label class="checkbox">
+                <input id="outlineToggle" type="checkbox" />
+                <span>浅色描边</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="gifSettings" class="gif-settings hidden">
+            <div class="control-grid">
+              <label class="field">
+                <span>GIF 宽度(px)</span>
+                <input id="gifWidthInput" type="number" min="100" max="2400" step="10" value="960" />
+              </label>
+              <label class="field">
+                <span>GIF 高度(px)</span>
+                <input id="gifHeightInput" type="number" min="100" max="2400" step="10" value="960" />
+              </label>
+              <label class="field">
+                <span>默认每张速度(s)</span>
+                <input id="gifDurationInput" type="number" min="0.1" max="20" step="0.1" value="0.9" />
+              </label>
+            </div>
+            <div class="control-group">
+              <label for="gifBackgroundColor">GIF 背景色</label>
+              <input id="gifBackgroundColor" type="color" value="#f5f7fb" />
+            </div>
+            <div class="control-group gif-repeat-group">
+              <label>循环次数</label>
+              <div class="segmented">
+                <button class="segment active" data-gif-repeat-mode="forever">无限循环</button>
+                <button class="segment" data-gif-repeat-mode="once">只播一次</button>
+                <button class="segment" data-gif-repeat-mode="custom">自定义</button>
+              </div>
+            </div>
+            <label id="gifRepeatCountWrap" class="field hidden">
+              <span>自定义循环次数</span>
+              <input id="gifRepeatCountInput" type="number" min="1" max="99" step="1" value="3" />
+            </label>
+            <div class="gif-helper">
+              <button id="applyGifDurationBtn" class="ghost">把默认速度应用到全部</button>
+            </div>
+          </div>
+
+          <div class="preview-actions">
+            <button id="renderBtn" class="primary">刷新预览</button>
+            <button id="downloadBtn">下载勾选</button>
+            <button id="downloadAllBtn">下载全部</button>
+          </div>
+
+          <div class="preview-wrap">
+            <canvas id="previewCanvas"></canvas>
+            <img id="previewGif" class="preview-gif hidden" alt="GIF 动态预览" />
+            <div id="previewGallery" class="preview-gallery hidden"></div>
+            <div id="emptyPreview" class="empty-preview">
+              右侧会显示完整预览
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="previewModal" class="preview-modal hidden" aria-hidden="true">
+      <div class="preview-modal-backdrop" data-close-preview="true"></div>
+      <div class="preview-modal-card" role="dialog" aria-modal="true" aria-label="高清预览">
+        <div class="preview-modal-bar">
+          <strong>高清预览</strong>
+          <div class="preview-modal-actions">
+            <button id="modalDownloadBtn" class="ghost">下载当前结果</button>
+            <button id="modalCloseBtn" class="ghost danger" type="button">关闭</button>
+          </div>
+        </div>
+        <div class="preview-modal-body">
+          <img id="modalPreviewImage" alt="高清预览图" />
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+  </html>
