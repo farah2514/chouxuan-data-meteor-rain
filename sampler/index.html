@@ -646,24 +646,19 @@
     }
 
     .balance-box {
-      border: 2px solid #f2decb;
+      border: 1px solid #e5e5e5;
       border-radius: 22px;
-      background: linear-gradient(180deg, #fffefb, #fff8ec);
-      padding: 12px;
-      box-shadow: 0 8px 18px rgba(233, 205, 183, 0.14);
+      background: #ffffff;
+      padding: 14px 16px;
+      box-shadow: none;
     }
 
-    .balance-box h4 {
-      margin: 0 0 6px;
-      font-size: 14px;
-      color: #8d5d73;
+    .balance-box .preview-title {
+      margin-bottom: 12px;
     }
 
-    .balance-box p {
-      margin: 0 0 10px;
-      color: #a07d8d;
-      font-size: 12px;
-      line-height: 1.6;
+    .balance-box .hint {
+      margin-top: 10px;
     }
 
     .balance-values {
@@ -1200,8 +1195,10 @@
           </div>
 
           <div class="balance-box">
-            <h4>均衡抽样设置</h4>
-            <p>按你选的字段做更均衡的随机抽样。</p>
+            <div class="preview-title">
+              <h3>均衡抽样</h3>
+              <span class="pill">按字段尽量均匀抽样</span>
+            </div>
             <div class="field">
               <label for="balanceField">均衡字段，多选</label>
               <select id="balanceField" multiple disabled></select>
