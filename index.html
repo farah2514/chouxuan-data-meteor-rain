@@ -163,12 +163,26 @@
     <script>
       const frame = document.getElementById("toolFrame");
       const buttons = Array.from(document.querySelectorAll(".tab-btn"));
+      const tabMap = {
+        collage: "/collage/index.html",
+        sampler: "/sampler/index.html",
+      };
+
+      function activateTab(targetSrc) {
+        const resolvedSrc = targetSrc || tabMap.collage;
+        buttons.forEach((item) => item.classList.toggle("active", item.dataset.src === resolvedSrc));
+        frame.src = resolvedSrc;
+      }
+
       buttons.forEach((button) => {
         button.addEventListener("click", () => {
-          buttons.forEach((item) => item.classList.toggle("active", item === button));
-          frame.src = button.dataset.src;
+          activateTab(button.dataset.src);
         });
       });
+
+      const params = new URLSearchParams(window.location.search);
+      const initialTab = params.get("tab");
+      activateTab(tabMap[initialTab] || tabMap.collage);
     </script>
   </body>
 </html>

@@ -3,13 +3,16 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import tempfile
 import time
+import hashlib
+import base64
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlencode, parse_qsl
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
@@ -23,10 +26,16 @@ FEISHU_APP_ID = (os.environ.get("FEISHU_APP_ID") or os.environ.get("LARK_APP_ID"
 FEISHU_APP_SECRET = (os.environ.get("FEISHU_APP_SECRET") or os.environ.get("LARK_APP_SECRET") or "").strip()
 FEISHU_FOLDER_TOKEN = (os.environ.get("FEISHU_FOLDER_TOKEN") or "").strip()
 FEISHU_API_BASE = (os.environ.get("FEISHU_API_BASE") or "https://open.feishu.cn").rstrip("/")
+FEISHU_AUTHORIZE_URL = (os.environ.get("FEISHU_AUTHORIZE_URL") or "https://accounts.feishu.cn/open-apis/authen/v1/authorize").rstrip("/")
+FEISHU_OAUTH_TOKEN_URL = (os.environ.get("FEISHU_OAUTH_TOKEN_URL") or "https://accounts.feishu.cn/oauth/v3/token").rstrip("/")
+FEISHU_REDIRECT_URI = (os.environ.get("FEISHU_REDIRECT_URI") or "").strip()
+FEISHU_OAUTH_SCOPE = (os.environ.get("FEISHU_OAUTH_SCOPE") or "offline_access sheets:spreadsheet").strip()
+SESSION_COOKIE_NAME = "sampler_session"
 TOKEN_CACHE = {
     "tenant_access_token": "",
     "expire_at": 0,
 }
+SESSION_STORE = {}
 
 
 def excel_col_name(index):
@@ -145,6 +154,114 @@ def has_feishu_api_config():
     return bool(FEISHU_APP_ID and FEISHU_APP_SECRET)
 
 
+def get_cookie_dict(handler):
+    cookie_header = handler.headers.get("Cookie") or ""
+    cookies = {}
+    for chunk in cookie_header.split(";"):
+        if "=" not in chunk:
+            continue
+        key, value = chunk.split("=", 1)
+        cookies[key.strip()] = value.strip()
+    return cookies
+
+
+def is_secure_request(handler):
+    forwarded_proto = (handler.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
+    if forwarded_proto:
+        return forwarded_proto == "https"
+    origin = (handler.headers.get("Origin") or "").strip().lower()
+    return origin.startswith("https://")
+
+
+def get_external_origin(handler):
+    forwarded_host = (handler.headers.get("X-Forwarded-Host") or "").split(",", 1)[0].strip()
+    host = forwarded_host or (handler.headers.get("Host") or "").strip() or f"127.0.0.1:{PORT}"
+    forwarded_proto = (handler.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
+    proto = forwarded_proto or ("https" if is_secure_request(handler) else "http")
+    return f"{proto}://{host}"
+
+
+def get_oauth_redirect_uri(handler):
+    return FEISHU_REDIRECT_URI or f"{get_external_origin(handler)}/api/lark/auth/callback"
+
+
+def get_safe_next_path(raw_value):
+    value = (raw_value or "").strip()
+    if not value:
+        return "/?tab=sampler"
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc:
+        return "/?tab=sampler"
+    if not value.startswith("/"):
+        return "/?tab=sampler"
+    return value
+
+
+def build_cookie_header(name, value, *, max_age=None, secure=False):
+    parts = [f"{name}={value}", "Path=/", "HttpOnly", "SameSite=Lax"]
+    if max_age is not None:
+        parts.append(f"Max-Age={int(max_age)}")
+    if secure:
+        parts.append("Secure")
+    return "; ".join(parts)
+
+
+def get_session(handler, create=False):
+    session_id = get_cookie_dict(handler).get(SESSION_COOKIE_NAME)
+    if session_id and session_id in SESSION_STORE:
+        return session_id, SESSION_STORE[session_id], None
+    if not create:
+        return "", None, None
+    session_id = secrets.token_urlsafe(24)
+    session = {"created_at": int(time.time())}
+    SESSION_STORE[session_id] = session
+    cookie = build_cookie_header(
+        SESSION_COOKIE_NAME,
+        session_id,
+        max_age=60 * 60 * 24 * 30,
+        secure=is_secure_request(handler),
+    )
+    return session_id, session, cookie
+
+
+def clear_session(handler):
+    session_id = get_cookie_dict(handler).get(SESSION_COOKIE_NAME)
+    if session_id:
+        SESSION_STORE.pop(session_id, None)
+    return build_cookie_header(
+        SESSION_COOKIE_NAME,
+        "",
+        max_age=0,
+        secure=is_secure_request(handler),
+    )
+
+
+def generate_code_verifier():
+    return secrets.token_urlsafe(64).rstrip("=")
+
+
+def generate_code_challenge(verifier):
+    digest = hashlib.sha256(verifier.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+
+
+def parse_feishu_auth_error(error_code, error_description):
+    raw_code = str(error_code or "").strip()
+    raw_description = str(error_description or "").strip()
+    text = f"{raw_code} {raw_description}".strip().lower()
+    if raw_code == "access_denied":
+        return "你取消了飞书授权。"
+    if "20027" in text:
+        return "飞书应用还没开通当前需要的权限，请先到开放平台里申请对应的表格权限。"
+    if "20010" in text:
+        return "当前用户没有这个飞书应用的使用权限，请先让管理员开放应用可见范围。"
+    if "20071" in text:
+        return "飞书回调地址不匹配，请检查开放平台里配置的重定向 URL 是否和当前网址一致。"
+    if raw_description:
+        return f"飞书授权失败：{raw_description}"
+    return "飞书授权失败，请稍后重试。"
+
+
 def parse_spreadsheet_token(url):
     parsed = urlparse((url or "").strip())
     if not parsed.scheme or not parsed.netloc:
@@ -163,6 +280,8 @@ def parse_spreadsheet_token(url):
 def parse_feishu_error(payload, fallback):
     code = payload.get("code")
     msg = str(payload.get("msg") or fallback or "飞书接口调用失败。").strip()
+    if code in {20005, 99991679}:
+        return "飞书授权已失效或缺少权限，请重新连接飞书并重新授权。"
     if code == 1310213:
         return (
             "当前飞书应用没有这个表格的访问权限。"
@@ -203,6 +322,80 @@ def http_json_request(method, url, payload=None, headers=None, timeout=30):
         raise RuntimeError("飞书接口返回了无法解析的内容。") from exc
 
 
+def get_user_access_token_by_code(handler, code, code_verifier):
+    status, payload = http_json_request(
+        "POST",
+        FEISHU_OAUTH_TOKEN_URL,
+        {
+            "grant_type": "authorization_code",
+            "client_id": FEISHU_APP_ID,
+            "client_secret": FEISHU_APP_SECRET,
+            "code": code,
+            "redirect_uri": get_oauth_redirect_uri(handler),
+            "code_verifier": code_verifier,
+        },
+    )
+    if status >= 400 or payload.get("code") != 0:
+        raise RuntimeError(parse_feishu_auth_error(payload.get("error") or payload.get("code"), payload.get("error_description") or payload.get("msg")))
+    return payload
+
+
+def refresh_user_access_token(session):
+    refresh_token = (session or {}).get("refresh_token") or ""
+    if not refresh_token:
+        raise RuntimeError("飞书授权已过期，请重新连接飞书。")
+    status, payload = http_json_request(
+        "POST",
+        FEISHU_OAUTH_TOKEN_URL,
+        {
+            "grant_type": "refresh_token",
+            "client_id": FEISHU_APP_ID,
+            "client_secret": FEISHU_APP_SECRET,
+            "refresh_token": refresh_token,
+        },
+    )
+    if status >= 400 or payload.get("code") != 0:
+        raise RuntimeError(parse_feishu_auth_error(payload.get("error") or payload.get("code"), payload.get("error_description") or payload.get("msg")))
+    apply_user_token_payload(session, payload)
+    return session.get("user_access_token") or ""
+
+
+def fetch_user_info(access_token):
+    data = feishu_api_request(
+        "GET",
+        "/open-apis/authen/v1/user_info",
+        access_token=access_token,
+    )
+    return data
+
+
+def apply_user_token_payload(session, payload):
+    now = time.time()
+    session["user_access_token"] = (payload.get("access_token") or "").strip()
+    session["user_access_expire_at"] = int(now + int(payload.get("expires_in") or 7200))
+    refresh_token = (payload.get("refresh_token") or "").strip()
+    if refresh_token:
+        session["refresh_token"] = refresh_token
+        session["refresh_expire_at"] = int(now + int(payload.get("refresh_token_expires_in") or 0))
+    session["scope"] = (payload.get("scope") or "").strip()
+    session["token_type"] = (payload.get("token_type") or "Bearer").strip()
+    session["authorized_at"] = int(now)
+
+
+def get_session_user_access_token(handler, allow_refresh=True):
+    _, session, _ = get_session(handler, create=False)
+    if not session:
+        return "", None
+    token = (session.get("user_access_token") or "").strip()
+    expire_at = int(session.get("user_access_expire_at") or 0)
+    if token and time.time() < max(expire_at - 300, 0):
+        return token, session
+    if allow_refresh and has_feishu_api_config() and (session.get("refresh_token") or ""):
+        token = refresh_user_access_token(session)
+        return token, session
+    return "", session
+
+
 def get_tenant_access_token():
     now = time.time()
     if TOKEN_CACHE["tenant_access_token"] and now < TOKEN_CACHE["expire_at"] - 300:
@@ -231,8 +424,8 @@ def get_tenant_access_token():
     return token
 
 
-def feishu_api_request(method, path, payload=None, timeout=30):
-    token = get_tenant_access_token()
+def feishu_api_request(method, path, payload=None, timeout=30, access_token=""):
+    token = access_token or get_tenant_access_token()
     status, body = http_json_request(
         method,
         f"{FEISHU_API_BASE}{path}",
@@ -245,10 +438,11 @@ def feishu_api_request(method, path, payload=None, timeout=30):
     return body.get("data") or {}
 
 
-def fetch_feishu_sheets(spreadsheet_token):
+def fetch_feishu_sheets(spreadsheet_token, access_token=""):
     data = feishu_api_request(
         "GET",
         f"/open-apis/sheets/v3/spreadsheets/{quote(spreadsheet_token)}/sheets/query",
+        access_token=access_token,
     )
     sheets = []
     for item in data.get("sheets", []):
@@ -290,11 +484,12 @@ def matrix_to_object_rows(values):
     return normalized_rows
 
 
-def load_sheet_rows_via_feishu(spreadsheet_token, sheet_id, range_text=""):
+def load_sheet_rows_via_feishu(spreadsheet_token, sheet_id, range_text="", access_token=""):
     full_range = feishu_range_text(sheet_id, range_text)
     data = feishu_api_request(
         "GET",
         f"/open-apis/sheets/v2/spreadsheets/{quote(spreadsheet_token)}/values/{quote(full_range, safe='')}",
+        access_token=access_token,
     )
     value_range = data.get("valueRange") or data.get("data") or {}
     values = value_range.get("values") or []
@@ -304,7 +499,7 @@ def load_sheet_rows_via_feishu(spreadsheet_token, sheet_id, range_text=""):
     }
 
 
-def write_sheet_values_via_feishu(spreadsheet_token, range_text, values):
+def write_sheet_values_via_feishu(spreadsheet_token, range_text, values, access_token=""):
     feishu_api_request(
         "PUT",
         f"/open-apis/sheets/v2/spreadsheets/{quote(spreadsheet_token)}/values",
@@ -314,10 +509,11 @@ def write_sheet_values_via_feishu(spreadsheet_token, range_text, values):
                 "values": values,
             }
         },
+        access_token=access_token,
     )
 
 
-def create_lark_workbook_via_feishu(title, headers, matrix, highlighted_positions):
+def create_lark_workbook_via_feishu(title, headers, matrix, highlighted_positions, access_token=""):
     payload = {"title": title}
     if FEISHU_FOLDER_TOKEN:
         payload["folder_token"] = FEISHU_FOLDER_TOKEN
@@ -325,11 +521,12 @@ def create_lark_workbook_via_feishu(title, headers, matrix, highlighted_position
         "POST",
         "/open-apis/sheets/v3/spreadsheets",
         payload=payload,
+        access_token=access_token,
     )
     spreadsheet = created.get("spreadsheet") or {}
     spreadsheet_token = spreadsheet.get("spreadsheet_token") or ""
     spreadsheet_url = spreadsheet.get("url") or ""
-    sheets = fetch_feishu_sheets(spreadsheet_token)
+    sheets = fetch_feishu_sheets(spreadsheet_token, access_token=access_token)
     if not sheets:
         raise RuntimeError("飞书表格已创建，但没有拿到默认工作表信息。")
     target_sheet = sheets[0]
@@ -337,7 +534,7 @@ def create_lark_workbook_via_feishu(title, headers, matrix, highlighted_position
     total_cols = max(1, len(headers))
     target_range = f"{target_sheet['sheet_id']}!A1:{excel_col_name(total_cols)}{total_rows}"
     values = [headers, *matrix]
-    write_sheet_values_via_feishu(spreadsheet_token, target_range, values)
+    write_sheet_values_via_feishu(spreadsheet_token, target_range, values, access_token=access_token)
 
     style_warning = ""
     if highlighted_positions:
@@ -352,9 +549,9 @@ def create_lark_workbook_via_feishu(title, headers, matrix, highlighted_position
     }
 
 
-def create_lark_workbook(title, headers, matrix, highlighted_positions):
-    if has_feishu_api_config():
-        return create_lark_workbook_via_feishu(title, headers, matrix, highlighted_positions)
+def create_lark_workbook(title, headers, matrix, highlighted_positions, access_token=""):
+    if access_token or has_feishu_api_config():
+        return create_lark_workbook_via_feishu(title, headers, matrix, highlighted_positions, access_token=access_token)
 
     sheet_name = "导出结果"
     payload = {
@@ -500,11 +697,13 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
-    def send_json(self, payload, status=200):
+    def send_json(self, payload, status=200, extra_headers=None):
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
+        for key, value in (extra_headers or []):
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(raw)
 
@@ -516,17 +715,153 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def send_redirect(self, location, extra_headers=None):
+        self.send_response(302)
+        self.send_header("Location", location)
+        for key, value in (extra_headers or []):
+            self.send_header(key, value)
+        self.end_headers()
+
+    def get_effective_feishu_context(self):
+        user_access_token, session = get_session_user_access_token(self)
+        if user_access_token:
+            return {
+                "mode": "user",
+                "access_token": user_access_token,
+                "session": session,
+            }
+        if has_feishu_api_config():
+            return {
+                "mode": "tenant",
+                "access_token": "",
+                "session": None,
+            }
+        return {
+            "mode": "cli",
+            "access_token": "",
+            "session": None,
+        }
+
+    def handle_auth_status(self):
+        authorized = False
+        user = None
+        scope = ""
+        error = ""
+        try:
+            token, session = get_session_user_access_token(self)
+            authorized = bool(token and session)
+            if session:
+                user = session.get("user_info")
+                scope = session.get("scope") or ""
+        except Exception as exc:
+            error = str(exc)
+        return self.send_json({
+            "ok": True,
+            "data": {
+                "configured": has_feishu_api_config(),
+                "authorized": authorized,
+                "scope": scope,
+                "user": user,
+                "redirect_uri": get_oauth_redirect_uri(self),
+                "default_scope": FEISHU_OAUTH_SCOPE,
+                "error": error,
+            }
+        })
+
+    def handle_auth_start(self, parsed):
+        if not has_feishu_api_config():
+            return self.send_json({
+                "ok": False,
+                "error": "服务端还没有配置飞书应用，请先填写 FEISHU_APP_ID 和 FEISHU_APP_SECRET。"
+            }, 400)
+        _, session, cookie_header = get_session(self, create=True)
+        state = secrets.token_urlsafe(24)
+        verifier = generate_code_verifier()
+        next_path = get_safe_next_path(dict(parse_qsl(parsed.query)).get("next") or "/?tab=sampler")
+        session["oauth_state"] = state
+        session["oauth_code_verifier"] = verifier
+        session["oauth_next_path"] = next_path
+        authorize_url = (
+            FEISHU_AUTHORIZE_URL
+            + "?"
+            + urlencode({
+                "client_id": FEISHU_APP_ID,
+                "response_type": "code",
+                "redirect_uri": get_oauth_redirect_uri(self),
+                "scope": FEISHU_OAUTH_SCOPE,
+                "state": state,
+                "prompt": "consent",
+                "code_challenge": generate_code_challenge(verifier),
+                "code_challenge_method": "S256",
+            })
+        )
+        headers = [("Set-Cookie", cookie_header)] if cookie_header else []
+        return self.send_redirect(authorize_url, headers)
+
+    def handle_auth_callback(self, parsed):
+        params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        _, session, cookie_header = get_session(self, create=True)
+        headers = [("Set-Cookie", cookie_header)] if cookie_header else []
+        next_path = get_safe_next_path((session or {}).get("oauth_next_path") or "/?tab=sampler")
+
+        if params.get("error"):
+            error_message = parse_feishu_auth_error(params.get("error"), params.get("error_description"))
+            target = f"{next_path}{'&' if '?' in next_path else '?'}larkAuth=error&message={quote(error_message)}"
+            return self.send_redirect(target, headers)
+
+        expected_state = (session or {}).get("oauth_state") or ""
+        if not expected_state or params.get("state") != expected_state:
+            target = f"{next_path}{'&' if '?' in next_path else '?'}larkAuth=error&message={quote('飞书授权状态校验失败，请重新连接。')}"
+            return self.send_redirect(target, headers)
+
+        code = (params.get("code") or "").strip()
+        if not code:
+            target = f"{next_path}{'&' if '?' in next_path else '?'}larkAuth=error&message={quote('飞书没有返回授权码，请重新授权。')}"
+            return self.send_redirect(target, headers)
+
+        try:
+            token_payload = get_user_access_token_by_code(self, code, session.get("oauth_code_verifier") or "")
+            apply_user_token_payload(session, token_payload)
+            user_info = fetch_user_info(session.get("user_access_token") or "")
+            session["user_info"] = user_info
+            session.pop("oauth_state", None)
+            session.pop("oauth_code_verifier", None)
+            session["oauth_next_path"] = next_path
+            target = f"{next_path}{'&' if '?' in next_path else '?'}larkAuth=success"
+            return self.send_redirect(target, headers)
+        except Exception as exc:
+            target = f"{next_path}{'&' if '?' in next_path else '?'}larkAuth=error&message={quote(str(exc))}"
+            return self.send_redirect(target, headers)
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path == "/api/lark/auth/status":
+                return self.handle_auth_status()
+            if parsed.path == "/api/lark/auth/start":
+                return self.handle_auth_start(parsed)
+            if parsed.path == "/api/lark/auth/callback":
+                return self.handle_auth_callback(parsed)
+            return super().do_GET()
+        except Exception as exc:
+            return self.send_json({"ok": False, "error": str(exc)}, 500)
+
     def do_POST(self):
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/api/lark/auth/logout":
+                cookie = clear_session(self)
+                return self.send_json({"ok": True}, 200, extra_headers=[("Set-Cookie", cookie)])
+
             if parsed.path == "/api/lark/workbook-info":
                 payload = parse_json_body(self)
                 url = (payload.get("url") or "").strip()
                 if not url:
                     return self.send_json({"ok": False, "error": "请先输入飞书表格链接。"}, 400)
-                if has_feishu_api_config():
+                auth_context = self.get_effective_feishu_context()
+                if auth_context["mode"] in {"user", "tenant"}:
                     spreadsheet_token = parse_spreadsheet_token(url)
-                    sheets = fetch_feishu_sheets(spreadsheet_token)
+                    sheets = fetch_feishu_sheets(spreadsheet_token, access_token=auth_context["access_token"])
                     data = {
                         "revision": None,
                         "sheets": sheets,
@@ -561,13 +896,19 @@ class Handler(SimpleHTTPRequestHandler):
                 if not sheet_id:
                     return self.send_json({"ok": False, "error": "请先选择工作表。"}, 400)
 
-                if has_feishu_api_config():
+                auth_context = self.get_effective_feishu_context()
+                if auth_context["mode"] in {"user", "tenant"}:
                     spreadsheet_token = parse_spreadsheet_token(url)
-                    sheets = fetch_feishu_sheets(spreadsheet_token)
+                    sheets = fetch_feishu_sheets(spreadsheet_token, access_token=auth_context["access_token"])
                     target_sheet = next((item for item in sheets if item.get("sheet_id") == sheet_id), None)
                     if not target_sheet:
                         return self.send_json({"ok": False, "error": "没有找到对应的工作表。"}, 404)
-                    data = load_sheet_rows_via_feishu(spreadsheet_token, sheet_id, range_text)
+                    data = load_sheet_rows_via_feishu(
+                        spreadsheet_token,
+                        sheet_id,
+                        range_text,
+                        access_token=auth_context["access_token"],
+                    )
                     rows = data.get("rows", [])
                     actual_range = data.get("actual_range")
                     current_region = None
@@ -659,7 +1000,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if not sampled_row_ids:
                     return self.send_json({"ok": False, "error": "当前还没有抽中的记录，请先执行随机抽样。"}, 400)
                 dataset = build_export_dataset(headers, active_rows, sampled_row_ids, mode, "lark")
-                created = create_lark_workbook(title, dataset["headers"], dataset["matrix"], dataset["highlighted_positions"])
+                auth_context = self.get_effective_feishu_context()
+                created = create_lark_workbook(
+                    title,
+                    dataset["headers"],
+                    dataset["matrix"],
+                    dataset["highlighted_positions"],
+                    access_token=auth_context["access_token"],
+                )
                 return self.send_json({"ok": True, "data": created})
 
             return self.send_json({"ok": False, "error": "接口不存在。"}, 404)

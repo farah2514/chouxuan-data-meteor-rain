@@ -123,20 +123,41 @@ async function proxyToSampler(req, res, reqUrl) {
   const body =
     req.method && !["GET", "HEAD"].includes(req.method.toUpperCase()) ? await readRequestBody(req) : undefined;
 
+  const upstreamHeaders = {};
+  Object.entries(req.headers || {}).forEach(([key, value]) => {
+    const lowerKey = String(key || "").toLowerCase();
+    if (["host", "connection", "content-length"].includes(lowerKey)) return;
+    if (value === undefined) return;
+    upstreamHeaders[key] = value;
+  });
+  upstreamHeaders["x-forwarded-host"] = req.headers.host || "";
+  upstreamHeaders["x-forwarded-proto"] = req.headers["x-forwarded-proto"]
+    || (req.socket && req.socket.encrypted ? "https" : "http");
+
   const upstream = await fetch(`http://127.0.0.1:${SAMPLER_PORT}${reqUrl.pathname}${reqUrl.search}`, {
     method: req.method || "GET",
-    headers: {
-      "Content-Type": req.headers["content-type"] || "application/json",
-    },
+    headers: upstreamHeaders,
     body,
+    redirect: "manual",
   });
 
   const responseBuffer = Buffer.from(await upstream.arrayBuffer());
   const headers = {};
   upstream.headers.forEach((value, key) => {
-    if (key.toLowerCase() === "connection") return;
+    if (["connection", "content-encoding", "transfer-encoding"].includes(key.toLowerCase())) return;
     headers[key] = value;
   });
+  if (typeof upstream.headers.getSetCookie === "function") {
+    const cookies = upstream.headers.getSetCookie();
+    if (cookies && cookies.length) {
+      headers["set-cookie"] = cookies;
+    }
+  } else {
+    const setCookie = upstream.headers.get("set-cookie");
+    if (setCookie) {
+      headers["set-cookie"] = setCookie;
+    }
+  }
   headers["Access-Control-Allow-Origin"] = "*";
 
   res.writeHead(upstream.status, headers);

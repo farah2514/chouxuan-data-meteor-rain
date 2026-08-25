@@ -1003,6 +1003,11 @@
             <label for="larkUrlInput">在线飞书表格链接</label>
             <input id="larkUrlInput" type="text" placeholder="粘贴飞书 sheets 链接，例如 https://.../sheets/xxx?sheet=xxx" />
             <div class="sticky-actions">
+              <button id="larkAuthBtn" class="primary" type="button">连接飞书</button>
+              <button id="larkLogoutBtn" class="ghost" type="button" hidden>退出飞书</button>
+            </div>
+            <div id="larkAuthState" class="hint">先连接飞书，再读取你有权限的在线表格。</div>
+            <div class="sticky-actions">
               <button id="loadLarkBtn" class="soft">读取飞书链接</button>
             </div>
             <div class="hint">读取后选择工作表和范围。</div>
@@ -1190,6 +1195,9 @@
     const els = {
       fileInput: document.getElementById("fileInput"),
       larkUrlInput: document.getElementById("larkUrlInput"),
+      larkAuthBtn: document.getElementById("larkAuthBtn"),
+      larkLogoutBtn: document.getElementById("larkLogoutBtn"),
+      larkAuthState: document.getElementById("larkAuthState"),
       loadLarkBtn: document.getElementById("loadLarkBtn"),
       sheetSelect: document.getElementById("sheetSelect"),
       rangeInput: document.getElementById("rangeInput"),
@@ -1284,6 +1292,19 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload || {}),
         });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "请求失败。");
+        }
+        return data.data;
+      } catch (error) {
+        throw new Error(normalizeErrorMessage(error));
+      }
+    }
+
+    async function getJson(url) {
+      try {
+        const response = await fetch(url, { credentials: "same-origin" });
         const data = await response.json();
         if (!response.ok || !data.ok) {
           throw new Error(data.error || "请求失败。");
@@ -1589,6 +1610,80 @@
       if (state.currentRange) meta.push("范围: " + state.currentRange);
       if (state.currentSourceType === "lark") meta.push("来源: 飞书在线");
       els.previewMeta.textContent = meta.length ? meta.join(" | ") : "等待上传";
+    }
+
+    function updateLarkAuthUI(auth) {
+      const configured = Boolean(auth && auth.configured);
+      const authorized = Boolean(auth && auth.authorized);
+      const userName = auth?.user?.name || auth?.user?.en_name || auth?.user?.email || "";
+
+      els.larkAuthBtn.disabled = !configured;
+      els.larkAuthBtn.textContent = authorized ? "重新授权飞书" : "连接飞书";
+      els.larkLogoutBtn.hidden = !authorized;
+
+      if (!configured) {
+        els.larkAuthState.textContent = "当前服务还没配好飞书应用，先把 App ID 和 App Secret 配上才能授权。";
+        return;
+      }
+      if (authorized) {
+        els.larkAuthState.textContent = userName
+          ? `已连接飞书：${userName}。现在可以读取你有权限的飞书表格。`
+          : "已连接飞书，现在可以读取你有权限的飞书表格。";
+        return;
+      }
+      if (auth?.error) {
+        els.larkAuthState.textContent = `飞书授权状态异常：${auth.error}`;
+        return;
+      }
+      els.larkAuthState.textContent = "未连接飞书。点上面的按钮授权后，就能读取你自己的飞书表格。";
+    }
+
+    async function refreshLarkAuthStatus() {
+      try {
+        const auth = await getJson("/api/lark/auth/status");
+        updateLarkAuthUI(auth);
+        return auth;
+      } catch (error) {
+        els.larkAuthBtn.disabled = false;
+        els.larkLogoutBtn.hidden = true;
+        els.larkAuthState.textContent = error.message || "飞书授权状态读取失败。";
+        return null;
+      }
+    }
+
+    function getLarkAuthNextPath() {
+      if (window.top !== window.self) {
+        return "/?tab=sampler";
+      }
+      return `${window.location.pathname}${window.location.search}`;
+    }
+
+    function consumeLarkAuthResult() {
+      const params = new URLSearchParams(window.location.search);
+      const authStatus = params.get("larkAuth");
+      const authMessage = params.get("message");
+      if (!authStatus) return;
+
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.delete("larkAuth");
+      nextUrl.searchParams.delete("message");
+      window.history.replaceState({}, "", nextUrl.pathname + nextUrl.search + nextUrl.hash);
+
+      if (authStatus === "success") {
+        showDialog({
+          title: "飞书已连接",
+          message: "授权完成了，现在可以直接读取你自己的飞书表格。",
+          sticker: "完成",
+        });
+        return;
+      }
+      if (authStatus === "error") {
+        showDialog({
+          title: "飞书授权失败",
+          message: authMessage || "这次授权没有完成，请再试一次。",
+          sticker: "出错了",
+        });
+      }
     }
 
     function populateFieldSelectors() {
@@ -2119,6 +2214,42 @@
       await loadWorkbookFromLarkUrl();
     });
 
+    els.larkAuthBtn.addEventListener("click", async () => {
+      const auth = await refreshLarkAuthStatus();
+      if (auth && !auth.configured) {
+        showDialog({
+          title: "还没配好飞书",
+          message: "当前服务端还没有填飞书应用信息，所以暂时没法发起授权。",
+          sticker: "提示",
+        });
+        return;
+      }
+      const target = `/api/lark/auth/start?next=${encodeURIComponent(getLarkAuthNextPath())}`;
+      if (window.top && window.top !== window.self) {
+        window.top.location.href = target;
+      } else {
+        window.location.href = target;
+      }
+    });
+
+    els.larkLogoutBtn.addEventListener("click", async () => {
+      try {
+        await postJson("/api/lark/auth/logout", {});
+        await refreshLarkAuthStatus();
+        showDialog({
+          title: "已退出飞书",
+          message: "当前网页里的飞书授权已经清掉了。",
+          sticker: "完成",
+        });
+      } catch (error) {
+        showDialog({
+          title: "退出失败",
+          message: error.message || "退出飞书失败。",
+          sticker: "出错了",
+        });
+      }
+    });
+
     els.sheetSelect.addEventListener("change", event => {
       state.currentSheet = event.target.value;
       if (state.currentSourceType === "lark") {
@@ -2214,6 +2345,8 @@
       }
     });
 
+    consumeLarkAuthResult();
+    refreshLarkAuthStatus();
     resetAll();
   </script>
 </body>

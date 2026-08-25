@@ -11,3 +11,7 @@ services:
         sync: false
       - key: FEISHU_FOLDER_TOKEN
         sync: false
+      - key: FEISHU_OAUTH_SCOPE
+        sync: false
+      - key: FEISHU_REDIRECT_URI
+        sync: false

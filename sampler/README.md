@@ -58,10 +58,11 @@ python app.py
 
 ### 飞书在线读取 / 导出飞书表格
 
-现在已经支持两种模式：
+现在已经支持三种模式：
 
-1. 优先使用飞书官方 OpenAPI
-2. 如果没有配置官方 API，再回退到本地 `lark-cli`
+1. 用户在网页里点“连接飞书”，用自己的飞书身份授权
+2. 如果没有用户授权，但服务端配置了飞书应用，则继续支持应用身份调用 OpenAPI
+3. 如果以上都没有，再回退到本地 `lark-cli`
 
 线上部署建议直接使用官方 OpenAPI。在 Render 的环境变量里填写：
 
@@ -69,12 +70,19 @@ python app.py
 FEISHU_APP_ID=你的飞书应用 App ID
 FEISHU_APP_SECRET=你的飞书应用 App Secret
 FEISHU_FOLDER_TOKEN=可选，导出到指定文件夹时再填
+FEISHU_OAUTH_SCOPE=可选，默认 offline_access sheets:spreadsheet
+FEISHU_REDIRECT_URI=可选，自定义回调地址时再填
 ```
 
-还需要在飞书开放平台为应用开通电子表格相关权限，并把应用添加到目标表格里，否则会报权限不足。
+还需要在飞书开放平台里：
+
+- 配置重定向 URL，例如 `https://你的域名/api/lark/auth/callback`
+- 开通电子表格相关权限
+- 让需要使用的人在网页里点击“连接飞书”完成授权
 
 注意：
 
 - 只配置了 `FEISHU_APP_ID / FEISHU_APP_SECRET`，还不代表自动有权访问所有表格
+- 用户授权模式下，默认按用户自己的飞书权限读取 / 导出表格
 - 使用 `tenant_access_token` 时，应用本身也必须被加入目标表格，或者使用应用自己创建的表格
 - 如果你本地已经登录了 `lark-cli`，未配置官方 API 时仍然可以继续本地使用旧链路

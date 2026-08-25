@@ -50,9 +50,14 @@ http://localhost:3000
 FEISHU_APP_ID=你的飞书应用 App ID
 FEISHU_APP_SECRET=你的飞书应用 App Secret
 FEISHU_FOLDER_TOKEN=可选，导出到指定文件夹时再填
+FEISHU_OAUTH_SCOPE=可选，默认 offline_access sheets:spreadsheet
+FEISHU_REDIRECT_URI=可选，自定义回调地址时再填
 ```
 
-并在飞书开放平台为应用开通电子表格相关权限，再把应用添加到目标表格的文档应用 / 协作者里。
+飞书开放平台里还要做两件事：
+
+- 在应用的安全设置里配置重定向 URL，线上一般填 `https://你的域名/api/lark/auth/callback`
+- 在权限管理里开通电子表格相关权限，用户进入网页后点击“连接飞书”完成授权
 
 ## 线上说明
 
