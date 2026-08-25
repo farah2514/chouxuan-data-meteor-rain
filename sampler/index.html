@@ -1637,7 +1637,7 @@
     }
 
     function handleBalanceFieldToggle(value) {
-      state.balanceFields = toggleInArray(state.balanceFields, value);
+      state.balanceFields = state.balanceFields[0] === value ? [] : [value];
       state.balanceValues = [];
       state.sampledRows = [];
       state.previewPage = 1;
@@ -1793,29 +1793,34 @@
     }
 
     function updateBalanceValueOptions() {
-      const selectedFields = state.balanceFields || [];
-      if (!selectedFields.length) {
+      const activeField = (state.balanceFields || [])[0] || "";
+      if (!activeField) {
         renderChipPicker(els.balanceValues, [], [], "请先选择均衡字段", () => {});
         return;
       }
 
-      const options = [];
-      selectedFields.forEach(field => {
-        getFieldDistinctValues(field).forEach(value => {
-          options.push({
-            value: `${field}::${value}`,
-            label: `${field}：${value}`,
-          });
-        });
-      });
+      const options = getFieldDistinctValues(activeField).map(value => ({
+        value,
+        label: value,
+      }));
 
       if (!options.length) {
         renderChipPicker(els.balanceValues, [], [], "当前字段没有可选值", () => {});
         return;
       }
 
-      renderChipPicker(els.balanceValues, options, state.balanceValues || [], (selectedFields.length > 0 ? "" : "请先选择均衡字段"), (value) => {
-        state.balanceValues = toggleInArray(state.balanceValues, value);
+      const selectedValues = (state.balanceValues || [])
+        .filter(token => String(token).startsWith(`${activeField}::`))
+        .map(token => String(token).slice(activeField.length + 2));
+
+      renderChipPicker(els.balanceValues, options, selectedValues, "请先选择均衡字段", (value) => {
+        const nextValues = new Set(
+          (state.balanceValues || []).filter(token => !String(token).startsWith(`${activeField}::`))
+        );
+        const fullToken = `${activeField}::${value}`;
+        if ((state.balanceValues || []).includes(fullToken)) nextValues.delete(fullToken);
+        else nextValues.add(fullToken);
+        state.balanceValues = Array.from(nextValues);
         state.sampledRows = [];
         state.previewPage = 1;
         els.exportSampleBtn.disabled = true;
