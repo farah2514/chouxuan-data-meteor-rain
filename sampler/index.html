@@ -180,10 +180,6 @@
       grid-column: 1 / -1;
     }
 
-    .grid > .panel:first-of-type .panel-body.stack > .lark-auth-banner {
-      grid-column: 1 / -1;
-    }
-
     .grid > .panel:first-of-type .panel-body.stack > .stack,
     .grid > .panel:first-of-type .panel-body.stack > .balance-box,
     .grid > .panel:first-of-type .panel-body.stack > .sidebar-plan-section {
@@ -492,6 +488,19 @@
     }
 
     .lark-connected-corner[hidden] {
+      display: none !important;
+    }
+
+    .lark-auth-corner {
+      position: absolute;
+      right: 18px;
+      top: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .lark-auth-corner[hidden] {
       display: none !important;
     }
 
@@ -900,19 +909,11 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
-      .lark-auth-banner {
-        justify-content: flex-end;
-        align-items: center;
-      }
-
-      .lark-auth-actions {
-        width: auto;
-      }
-
       .panel-header.with-corner {
         padding-right: 12px;
       }
 
+      .lark-auth-corner,
       .lark-connected-corner {
         position: static;
         margin-top: 10px;
@@ -1108,18 +1109,16 @@
         <div class="panel-header with-corner">
           <h2>数据设置</h2>
           <p>导入后设置范围、分类和抽样方式。</p>
+          <div id="larkAuthCorner" class="lark-auth-corner">
+            <button id="larkAuthBtn" class="primary" type="button">连接飞书</button>
+          </div>
           <div id="larkConnectedCorner" class="lark-connected-corner" hidden>
             <span id="larkConnectedLabel" class="lark-connected-dot">已连接飞书</span>
             <button id="larkHeaderLogoutBtn" class="ghost lark-corner-action" type="button">退出</button>
           </div>
         </div>
         <div class="panel-body stack">
-          <div id="larkAuthBanner" class="lark-auth-banner">
-            <div class="lark-auth-actions">
-              <button id="larkAuthBtn" class="primary" type="button">连接飞书</button>
-            </div>
-            <div id="larkAuthState" class="sr-only">点一下授权后，就能读取你有权限的飞书表格。</div>
-          </div>
+          <div id="larkAuthState" class="sr-only">点一下授权后，就能读取你有权限的飞书表格。</div>
 
           <div class="field">
             <label for="fileInput">上传数据文件</label>
@@ -1321,7 +1320,7 @@
     const els = {
       fileInput: document.getElementById("fileInput"),
       larkUrlInput: document.getElementById("larkUrlInput"),
-      larkAuthBanner: document.getElementById("larkAuthBanner"),
+      larkAuthBanner: document.getElementById("larkAuthCorner"),
       larkAuthBtn: document.getElementById("larkAuthBtn"),
       larkAuthState: document.getElementById("larkAuthState"),
       larkConnectedCorner: document.getElementById("larkConnectedCorner"),
