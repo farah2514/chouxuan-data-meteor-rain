@@ -175,6 +175,10 @@
       grid-column: 1 / -1;
     }
 
+    .grid > .panel:first-of-type .panel-body.stack > .lark-auth-banner {
+      grid-column: 1 / -1;
+    }
+
     .grid > .panel:first-of-type .panel-body.stack > .stack,
     .grid > .panel:first-of-type .panel-body.stack > .balance-box,
     .grid > .panel:first-of-type .panel-body.stack > .sidebar-plan-section {
@@ -433,7 +437,43 @@
       flex-wrap: wrap;
     }
 
+    .lark-auth-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px 16px;
+      border: 2px solid rgba(239, 207, 218, 0.95);
+      border-radius: 22px;
+      background: linear-gradient(180deg, #fffaf6 0%, #fff2f7 100%);
+      box-shadow: 0 8px 18px rgba(233, 205, 183, 0.12);
+    }
+
+    .lark-auth-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .lark-auth-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .lark-auth-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      flex: 0 0 auto;
+      align-items: center;
+    }
+
     #loadLarkBtn::before,
+    #larkAuthBtn::before,
+    #larkLogoutBtn::before,
     #loadRangeBtn::before,
     #sampleBtn::before,
     #exportSampleBtn::before,
@@ -811,6 +851,15 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
+      .lark-auth-banner {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .lark-auth-actions {
+        width: 100%;
+      }
+
       .container {
         padding-inline: 10px;
       }
@@ -865,6 +914,8 @@
     .panel-header h2::before,
     .panel-header h3::before,
     .preview-title h3::before,
+    #larkAuthBtn::before,
+    #larkLogoutBtn::before,
     #loadLarkBtn::before,
     #loadRangeBtn::before,
     #sampleBtn::before,
@@ -993,6 +1044,17 @@
           <p>导入后设置范围、分类和抽样方式。</p>
         </div>
         <div class="panel-body stack">
+          <div class="lark-auth-banner">
+            <div class="lark-auth-copy">
+              <p class="lark-auth-title">先连接飞书，再读取在线表格</p>
+              <div id="larkAuthState" class="hint">点一下授权后，就能读取你有权限的飞书表格。</div>
+            </div>
+            <div class="lark-auth-actions">
+              <button id="larkAuthBtn" class="primary" type="button">连接飞书</button>
+              <button id="larkLogoutBtn" class="ghost" type="button" hidden>退出飞书</button>
+            </div>
+          </div>
+
           <div class="field">
             <label for="fileInput">上传数据文件</label>
             <input id="fileInput" type="file" accept=".csv,.tsv,.xlsx,.xls,.json,.txt" />
@@ -1002,11 +1064,6 @@
           <div class="field">
             <label for="larkUrlInput">在线飞书表格链接</label>
             <input id="larkUrlInput" type="text" placeholder="粘贴飞书 sheets 链接，例如 https://.../sheets/xxx?sheet=xxx" />
-            <div class="sticky-actions">
-              <button id="larkAuthBtn" class="primary" type="button">连接飞书</button>
-              <button id="larkLogoutBtn" class="ghost" type="button" hidden>退出飞书</button>
-            </div>
-            <div id="larkAuthState" class="hint">先连接飞书，再读取你有权限的在线表格。</div>
             <div class="sticky-actions">
               <button id="loadLarkBtn" class="soft">读取飞书链接</button>
             </div>
