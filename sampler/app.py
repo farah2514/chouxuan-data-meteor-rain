@@ -8,8 +8,6 @@ import shutil
 import subprocess
 import tempfile
 import time
-import hashlib
-import base64
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, urlparse, urlencode, parse_qsl
@@ -236,15 +234,6 @@ def clear_session(handler):
     )
 
 
-def generate_code_verifier():
-    return secrets.token_urlsafe(64).rstrip("=")
-
-
-def generate_code_challenge(verifier):
-    digest = hashlib.sha256(verifier.encode("utf-8")).digest()
-    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
-
-
 def parse_feishu_auth_error(error_code, error_description):
     raw_code = str(error_code or "").strip()
     raw_description = str(error_description or "").strip()
@@ -322,19 +311,17 @@ def http_json_request(method, url, payload=None, headers=None, timeout=30):
         raise RuntimeError("飞书接口返回了无法解析的内容。") from exc
 
 
-def get_user_access_token_by_code(handler, code, code_verifier):
-    status, payload = http_json_request(
-        "POST",
-        FEISHU_OAUTH_TOKEN_URL,
-        {
-            "grant_type": "authorization_code",
-            "client_id": FEISHU_APP_ID,
-            "client_secret": FEISHU_APP_SECRET,
-            "code": code,
-            "redirect_uri": get_oauth_redirect_uri(handler),
-            "code_verifier": code_verifier,
-        },
-    )
+def get_user_access_token_by_code(handler, code, code_verifier=""):
+    request_payload = {
+        "grant_type": "authorization_code",
+        "client_id": FEISHU_APP_ID,
+        "client_secret": FEISHU_APP_SECRET,
+        "code": code,
+        "redirect_uri": get_oauth_redirect_uri(handler),
+    }
+    if code_verifier:
+        request_payload["code_verifier"] = code_verifier
+    status, payload = http_json_request("POST", FEISHU_OAUTH_TOKEN_URL, request_payload)
     if status >= 400 or payload.get("code") != 0:
         raise RuntimeError(parse_feishu_auth_error(payload.get("error") or payload.get("code"), payload.get("error_description") or payload.get("msg")))
     return payload
@@ -776,10 +763,9 @@ class Handler(SimpleHTTPRequestHandler):
             }, 400)
         _, session, cookie_header = get_session(self, create=True)
         state = secrets.token_urlsafe(24)
-        verifier = generate_code_verifier()
         next_path = get_safe_next_path(dict(parse_qsl(parsed.query)).get("next") or "/?tab=sampler")
         session["oauth_state"] = state
-        session["oauth_code_verifier"] = verifier
+        session.pop("oauth_code_verifier", None)
         session["oauth_next_path"] = next_path
         authorize_url = (
             FEISHU_AUTHORIZE_URL
@@ -791,8 +777,6 @@ class Handler(SimpleHTTPRequestHandler):
                 "scope": FEISHU_OAUTH_SCOPE,
                 "state": state,
                 "prompt": "consent",
-                "code_challenge": generate_code_challenge(verifier),
-                "code_challenge_method": "S256",
             })
         )
         headers = [("Set-Cookie", cookie_header)] if cookie_header else []
