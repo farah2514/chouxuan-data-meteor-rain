@@ -118,6 +118,11 @@
       background: linear-gradient(180deg, rgba(255, 250, 242, 0.96), rgba(255, 255, 255, 0.98));
     }
 
+    .panel-header.with-corner {
+      position: relative;
+      padding-right: 190px;
+    }
+
     .panel-header h2,
     .panel-header h3 {
       margin: 0 0 6px;
@@ -471,9 +476,48 @@
       align-items: center;
     }
 
+    .lark-connected-corner {
+      position: absolute;
+      right: 18px;
+      top: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .lark-connected-dot {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: #f4f4f4;
+      border: 1px solid #d8d8d8;
+      color: #111111;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .lark-connected-dot::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #111111;
+      flex: 0 0 auto;
+    }
+
+    .lark-corner-action {
+      min-height: 32px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+
     #loadLarkBtn::before,
     #larkAuthBtn::before,
-    #larkLogoutBtn::before,
     #loadRangeBtn::before,
     #sampleBtn::before,
     #exportSampleBtn::before,
@@ -860,6 +904,16 @@
         width: 100%;
       }
 
+      .panel-header.with-corner {
+        padding-right: 12px;
+      }
+
+      .lark-connected-corner {
+        position: static;
+        margin-top: 10px;
+        flex-wrap: wrap;
+      }
+
       .container {
         padding-inline: 10px;
       }
@@ -915,7 +969,6 @@
     .panel-header h3::before,
     .preview-title h3::before,
     #larkAuthBtn::before,
-    #larkLogoutBtn::before,
     #loadLarkBtn::before,
     #loadRangeBtn::before,
     #sampleBtn::before,
@@ -1039,19 +1092,22 @@
 
     <div class="grid">
       <aside class="panel">
-        <div class="panel-header">
+        <div class="panel-header with-corner">
           <h2>数据设置</h2>
           <p>导入后设置范围、分类和抽样方式。</p>
+          <div id="larkConnectedCorner" class="lark-connected-corner" hidden>
+            <span id="larkConnectedLabel" class="lark-connected-dot">已连接飞书</span>
+            <button id="larkHeaderLogoutBtn" class="ghost lark-corner-action" type="button">退出</button>
+          </div>
         </div>
         <div class="panel-body stack">
-          <div class="lark-auth-banner">
+          <div id="larkAuthBanner" class="lark-auth-banner">
             <div class="lark-auth-copy">
               <p class="lark-auth-title">先连接飞书，再读取在线表格</p>
               <div id="larkAuthState" class="hint">点一下授权后，就能读取你有权限的飞书表格。</div>
             </div>
             <div class="lark-auth-actions">
               <button id="larkAuthBtn" class="primary" type="button">连接飞书</button>
-              <button id="larkLogoutBtn" class="ghost" type="button" hidden>退出飞书</button>
             </div>
           </div>
 
@@ -1252,9 +1308,12 @@
     const els = {
       fileInput: document.getElementById("fileInput"),
       larkUrlInput: document.getElementById("larkUrlInput"),
+      larkAuthBanner: document.getElementById("larkAuthBanner"),
       larkAuthBtn: document.getElementById("larkAuthBtn"),
-      larkLogoutBtn: document.getElementById("larkLogoutBtn"),
       larkAuthState: document.getElementById("larkAuthState"),
+      larkConnectedCorner: document.getElementById("larkConnectedCorner"),
+      larkConnectedLabel: document.getElementById("larkConnectedLabel"),
+      larkHeaderLogoutBtn: document.getElementById("larkHeaderLogoutBtn"),
       loadLarkBtn: document.getElementById("loadLarkBtn"),
       sheetSelect: document.getElementById("sheetSelect"),
       rangeInput: document.getElementById("rangeInput"),
@@ -1676,7 +1735,10 @@
 
       els.larkAuthBtn.disabled = !configured;
       els.larkAuthBtn.textContent = authorized ? "重新授权飞书" : "连接飞书";
-      els.larkLogoutBtn.hidden = !authorized;
+      els.larkAuthBanner.hidden = authorized;
+      els.larkConnectedCorner.hidden = !authorized;
+      els.larkConnectedLabel.textContent = "已连接飞书";
+      els.larkConnectedLabel.title = userName ? `当前已连接：${userName}` : "当前已连接飞书";
 
       if (!configured) {
         els.larkAuthState.textContent = "当前服务还没配好飞书应用，先把 App ID 和 App Secret 配上才能授权。";
@@ -1702,7 +1764,8 @@
         return auth;
       } catch (error) {
         els.larkAuthBtn.disabled = false;
-        els.larkLogoutBtn.hidden = true;
+        els.larkAuthBanner.hidden = false;
+        els.larkConnectedCorner.hidden = true;
         els.larkAuthState.textContent = error.message || "飞书授权状态读取失败。";
         return null;
       }
@@ -2289,7 +2352,7 @@
       }
     });
 
-    els.larkLogoutBtn.addEventListener("click", async () => {
+    async function handleLarkLogout() {
       try {
         await postJson("/api/lark/auth/logout", {});
         await refreshLarkAuthStatus();
@@ -2305,7 +2368,9 @@
           sticker: "出错了",
         });
       }
-    });
+    }
+
+    els.larkHeaderLogoutBtn.addEventListener("click", handleLarkLogout);
 
     els.sheetSelect.addEventListener("change", event => {
       state.currentSheet = event.target.value;
