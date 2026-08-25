@@ -2,12 +2,16 @@ import csv
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 import xlsxwriter
 
@@ -15,6 +19,14 @@ import xlsxwriter
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get("PORT", "8877"))
 HOST = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
+FEISHU_APP_ID = (os.environ.get("FEISHU_APP_ID") or os.environ.get("LARK_APP_ID") or "").strip()
+FEISHU_APP_SECRET = (os.environ.get("FEISHU_APP_SECRET") or os.environ.get("LARK_APP_SECRET") or "").strip()
+FEISHU_FOLDER_TOKEN = (os.environ.get("FEISHU_FOLDER_TOKEN") or "").strip()
+FEISHU_API_BASE = (os.environ.get("FEISHU_API_BASE") or "https://open.feishu.cn").rstrip("/")
+TOKEN_CACHE = {
+    "tenant_access_token": "",
+    "expire_at": 0,
+}
 
 
 def excel_col_name(index):
@@ -129,7 +141,221 @@ def build_xlsx_bytes(headers, rows, highlighted_positions):
     return output.read()
 
 
+def has_feishu_api_config():
+    return bool(FEISHU_APP_ID and FEISHU_APP_SECRET)
+
+
+def parse_spreadsheet_token(url):
+    parsed = urlparse((url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        raise RuntimeError("请填写完整的飞书表格链接。")
+    parts = [part for part in parsed.path.split("/") if part]
+    for idx, part in enumerate(parts[:-1]):
+        if part in {"sheets", "sheet"}:
+            return parts[idx + 1]
+    if parts:
+        fallback = parts[-1]
+        if re.fullmatch(r"[A-Za-z0-9]{10,}", fallback):
+            return fallback
+    raise RuntimeError("没有从链接里识别出飞书表格 token，请确认这是飞书电子表格链接。")
+
+
+def parse_feishu_error(payload, fallback):
+    code = payload.get("code")
+    msg = str(payload.get("msg") or fallback or "飞书接口调用失败。").strip()
+    if code == 1310213:
+        return (
+            "当前飞书应用没有这个表格的访问权限。"
+            "请先在飞书表格右上角把应用添加为文档应用或协作者，再重试。"
+        )
+    if code == 99991663:
+        return "飞书应用凭证无效，请检查 FEISHU_APP_ID / FEISHU_APP_SECRET 是否填写正确。"
+    if code == 99991661:
+        return "飞书应用访问凭证已失效，请稍后重试；如果持续失败，请检查应用配置。"
+    if "permission" in msg.lower():
+        return "飞书接口返回权限不足，请确认应用已开通表格权限，并已被加入目标表格。"
+    return f"{msg}（错误码：{code}）" if code not in (None, 0) else msg
+
+
+def http_json_request(method, url, payload=None, headers=None, timeout=30):
+    request_headers = dict(headers or {})
+    request_headers.setdefault("Accept", "application/json")
+    body = None
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request_headers.setdefault("Content-Type", "application/json; charset=utf-8")
+    request = Request(url, data=body, headers=request_headers, method=method)
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            status = getattr(response, "status", 200)
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        status = exc.code
+    except URLError as exc:
+        raise RuntimeError(f"连接飞书接口失败：{exc.reason}") from exc
+
+    if not raw:
+        return status, {}
+    try:
+        return status, json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("飞书接口返回了无法解析的内容。") from exc
+
+
+def get_tenant_access_token():
+    now = time.time()
+    if TOKEN_CACHE["tenant_access_token"] and now < TOKEN_CACHE["expire_at"] - 300:
+        return TOKEN_CACHE["tenant_access_token"]
+
+    if not has_feishu_api_config():
+        raise RuntimeError(
+            "当前服务还没有配置飞书应用。请先在部署环境里填写 FEISHU_APP_ID 和 FEISHU_APP_SECRET。"
+        )
+
+    status, payload = http_json_request(
+        "POST",
+        f"{FEISHU_API_BASE}/open-apis/auth/v3/tenant_access_token/internal",
+        {
+            "app_id": FEISHU_APP_ID,
+            "app_secret": FEISHU_APP_SECRET,
+        },
+    )
+    if status >= 400 or payload.get("code") != 0:
+        raise RuntimeError(parse_feishu_error(payload, "获取飞书 tenant_access_token 失败。"))
+
+    token = payload.get("tenant_access_token") or ""
+    expire = int(payload.get("expire") or 7200)
+    TOKEN_CACHE["tenant_access_token"] = token
+    TOKEN_CACHE["expire_at"] = now + expire
+    return token
+
+
+def feishu_api_request(method, path, payload=None, timeout=30):
+    token = get_tenant_access_token()
+    status, body = http_json_request(
+        method,
+        f"{FEISHU_API_BASE}{path}",
+        payload=payload,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=timeout,
+    )
+    if status >= 400 or body.get("code") != 0:
+        raise RuntimeError(parse_feishu_error(body, "飞书接口调用失败。"))
+    return body.get("data") or {}
+
+
+def fetch_feishu_sheets(spreadsheet_token):
+    data = feishu_api_request(
+        "GET",
+        f"/open-apis/sheets/v3/spreadsheets/{quote(spreadsheet_token)}/sheets/query",
+    )
+    sheets = []
+    for item in data.get("sheets", []):
+        grid = item.get("grid_properties") or {}
+        sheets.append({
+            "sheet_id": item.get("sheet_id") or "",
+            "sheet_name": item.get("title") or item.get("sheet_name") or "",
+            "index": item.get("index", 0),
+            "hidden": bool(item.get("hidden")),
+            "row_count": grid.get("row_count", 0),
+            "column_count": grid.get("column_count", 0),
+        })
+    return sheets
+
+
+def feishu_range_text(sheet_id, range_text=""):
+    clean_range = (range_text or "").strip()
+    return f"{sheet_id}!{clean_range}" if clean_range else sheet_id
+
+
+def matrix_to_object_rows(values):
+    if not values:
+        return []
+    header = [str(cell or "").strip() for cell in values[0]]
+    normalized_rows = []
+    for row in values[1:]:
+        current = list(row or [])
+        if len(current) < len(header):
+            current.extend([""] * (len(header) - len(current)))
+        if len(current) > len(header):
+            current = current[: len(header)]
+        normalized_row = {
+            header[idx] or f"column_{idx + 1}": str(current[idx] if idx < len(current) else "").strip()
+            for idx in range(len(header))
+        }
+        if not any(str(value or "").strip() for value in normalized_row.values()):
+            continue
+        normalized_rows.append(normalized_row)
+    return normalized_rows
+
+
+def load_sheet_rows_via_feishu(spreadsheet_token, sheet_id, range_text=""):
+    full_range = feishu_range_text(sheet_id, range_text)
+    data = feishu_api_request(
+        "GET",
+        f"/open-apis/sheets/v2/spreadsheets/{quote(spreadsheet_token)}/values/{quote(full_range, safe='')}",
+    )
+    value_range = data.get("valueRange") or data.get("data") or {}
+    values = value_range.get("values") or []
+    return {
+        "rows": matrix_to_object_rows(values),
+        "actual_range": value_range.get("range") or full_range,
+    }
+
+
+def write_sheet_values_via_feishu(spreadsheet_token, range_text, values):
+    feishu_api_request(
+        "PUT",
+        f"/open-apis/sheets/v2/spreadsheets/{quote(spreadsheet_token)}/values",
+        payload={
+            "valueRange": {
+                "range": range_text,
+                "values": values,
+            }
+        },
+    )
+
+
+def create_lark_workbook_via_feishu(title, headers, matrix, highlighted_positions):
+    payload = {"title": title}
+    if FEISHU_FOLDER_TOKEN:
+        payload["folder_token"] = FEISHU_FOLDER_TOKEN
+    created = feishu_api_request(
+        "POST",
+        "/open-apis/sheets/v3/spreadsheets",
+        payload=payload,
+    )
+    spreadsheet = created.get("spreadsheet") or {}
+    spreadsheet_token = spreadsheet.get("spreadsheet_token") or ""
+    spreadsheet_url = spreadsheet.get("url") or ""
+    sheets = fetch_feishu_sheets(spreadsheet_token)
+    if not sheets:
+        raise RuntimeError("飞书表格已创建，但没有拿到默认工作表信息。")
+    target_sheet = sheets[0]
+    total_rows = max(1, len(matrix) + 1)
+    total_cols = max(1, len(headers))
+    target_range = f"{target_sheet['sheet_id']}!A1:{excel_col_name(total_cols)}{total_rows}"
+    values = [headers, *matrix]
+    write_sheet_values_via_feishu(spreadsheet_token, target_range, values)
+
+    style_warning = ""
+    if highlighted_positions:
+        style_warning = "已导出到飞书表格，并保留“抽样标记”列；整行底色高亮后续可继续补成官方样式接口版本。"
+
+    return {
+        "url": spreadsheet_url,
+        "spreadsheet_token": spreadsheet_token,
+        "sheet_name": target_sheet.get("sheet_name") or "Sheet1",
+        "style_warning": style_warning,
+        "raw": created,
+    }
+
+
 def create_lark_workbook(title, headers, matrix, highlighted_positions):
+    if has_feishu_api_config():
+        return create_lark_workbook_via_feishu(title, headers, matrix, highlighted_positions)
+
     sheet_name = "导出结果"
     payload = {
         "sheets": [
@@ -204,7 +430,10 @@ def create_lark_workbook(title, headers, matrix, highlighted_positions):
 
 def run_lark_cli(args):
     if shutil.which("lark-cli") is None:
-        raise RuntimeError("当前部署环境没有安装飞书读取能力，在线飞书读取和导出飞书表格暂时不可用，请先使用本地文件上传，或单独补充飞书 API 部署配置。")
+        raise RuntimeError(
+            "当前服务既没有配置飞书官方 API，也没有安装 lark-cli。"
+            "请在部署环境里填写 FEISHU_APP_ID 和 FEISHU_APP_SECRET，或在本地使用已登录的 lark-cli。"
+        )
     result = subprocess.run(
         args,
         cwd=str(ROOT),
@@ -295,14 +524,24 @@ class Handler(SimpleHTTPRequestHandler):
                 url = (payload.get("url") or "").strip()
                 if not url:
                     return self.send_json({"ok": False, "error": "请先输入飞书表格链接。"}, 400)
-                data = run_lark_cli([
-                    "lark-cli",
-                    "sheets",
-                    "+workbook-info",
-                    "--url",
-                    url,
-                    "--json",
-                ])
+                if has_feishu_api_config():
+                    spreadsheet_token = parse_spreadsheet_token(url)
+                    sheets = fetch_feishu_sheets(spreadsheet_token)
+                    data = {
+                        "revision": None,
+                        "sheets": sheets,
+                        "source_url": url,
+                        "spreadsheet_token": spreadsheet_token,
+                    }
+                else:
+                    data = run_lark_cli([
+                        "lark-cli",
+                        "sheets",
+                        "+workbook-info",
+                        "--url",
+                        url,
+                        "--json",
+                    ])
                 return self.send_json({
                     "ok": True,
                     "data": {
@@ -322,53 +561,65 @@ class Handler(SimpleHTTPRequestHandler):
                 if not sheet_id:
                     return self.send_json({"ok": False, "error": "请先选择工作表。"}, 400)
 
-                info = run_lark_cli([
-                    "lark-cli",
-                    "sheets",
-                    "+workbook-info",
-                    "--url",
-                    url,
-                    "--json",
-                ])
-                sheets = info.get("sheets", [])
-                target_sheet = next((item for item in sheets if item.get("sheet_id") == sheet_id), None)
-                if not target_sheet:
-                    return self.send_json({"ok": False, "error": "没有找到对应的工作表。"}, 404)
+                if has_feishu_api_config():
+                    spreadsheet_token = parse_spreadsheet_token(url)
+                    sheets = fetch_feishu_sheets(spreadsheet_token)
+                    target_sheet = next((item for item in sheets if item.get("sheet_id") == sheet_id), None)
+                    if not target_sheet:
+                        return self.send_json({"ok": False, "error": "没有找到对应的工作表。"}, 404)
+                    data = load_sheet_rows_via_feishu(spreadsheet_token, sheet_id, range_text)
+                    rows = data.get("rows", [])
+                    actual_range = data.get("actual_range")
+                    current_region = None
+                else:
+                    info = run_lark_cli([
+                        "lark-cli",
+                        "sheets",
+                        "+workbook-info",
+                        "--url",
+                        url,
+                        "--json",
+                    ])
+                    sheets = info.get("sheets", [])
+                    target_sheet = next((item for item in sheets if item.get("sheet_id") == sheet_id), None)
+                    if not target_sheet:
+                        return self.send_json({"ok": False, "error": "没有找到对应的工作表。"}, 404)
 
-                command = [
-                    "lark-cli",
-                    "sheets",
-                    "+csv-get",
-                    "--url",
-                    url,
-                    "--sheet-id",
-                    sheet_id,
-                    "--include-row-prefix=false",
-                    "--max-chars",
-                    "5000000",
-                    "--json",
-                ]
-                if range_text:
-                    command.extend(["--range", range_text])
+                    command = [
+                        "lark-cli",
+                        "sheets",
+                        "+csv-get",
+                        "--url",
+                        url,
+                        "--sheet-id",
+                        sheet_id,
+                        "--include-row-prefix=false",
+                        "--max-chars",
+                        "5000000",
+                        "--json",
+                    ]
+                    if range_text:
+                        command.extend(["--range", range_text])
 
-                data = run_lark_cli(command)
-                if data.get("has_more"):
-                    return self.send_json({
-                        "ok": False,
-                        "error": "当前读取范围过大，飞书返回被截断了。请缩小单元格范围后重试。",
-                        "data": {
-                            "actual_range": data.get("actual_range"),
-                            "current_region": data.get("current_region"),
-                        }
-                    }, 400)
-
-                rows = normalize_sheet_rows(data.get("annotated_csv", ""))
+                    data = run_lark_cli(command)
+                    if data.get("has_more"):
+                        return self.send_json({
+                            "ok": False,
+                            "error": "当前读取范围过大，飞书返回被截断了。请缩小单元格范围后重试。",
+                            "data": {
+                                "actual_range": data.get("actual_range"),
+                                "current_region": data.get("current_region"),
+                            }
+                        }, 400)
+                    rows = normalize_sheet_rows(data.get("annotated_csv", ""))
+                    actual_range = data.get("actual_range")
+                    current_region = data.get("current_region")
                 return self.send_json({
                     "ok": True,
                     "data": {
                         "rows": rows,
-                        "actual_range": data.get("actual_range") or range_text,
-                        "current_region": data.get("current_region"),
+                        "actual_range": actual_range or range_text,
+                        "current_region": current_region,
                         "sheet": target_sheet,
                         "row_count": target_sheet.get("row_count", 0),
                         "source_url": url,

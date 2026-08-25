@@ -44,6 +44,16 @@ http://localhost:3000
 /healthz
 ```
 
+如果你要在线使用飞书表格读取 / 导出飞书表格，还需要在 Render 的环境变量里填写：
+
+```text
+FEISHU_APP_ID=你的飞书应用 App ID
+FEISHU_APP_SECRET=你的飞书应用 App Secret
+FEISHU_FOLDER_TOKEN=可选，导出到指定文件夹时再填
+```
+
+并在飞书开放平台为应用开通电子表格相关权限，再把应用添加到目标表格的文档应用 / 协作者里。
+
 ## 线上说明
 
 - 线上部署会保留普通提图、TikTok 增强提图、拼图、GIF、分类抽样等主要功能

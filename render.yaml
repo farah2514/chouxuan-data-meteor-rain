@@ -4,3 +4,10 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     autoDeploy: true
+    envVars:
+      - key: FEISHU_APP_ID
+        sync: false
+      - key: FEISHU_APP_SECRET
+        sync: false
+      - key: FEISHU_FOLDER_TOKEN
+        sync: false
