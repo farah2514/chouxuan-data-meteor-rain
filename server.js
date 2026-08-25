@@ -213,14 +213,51 @@ function normalizeImageUrl(baseUrl, value) {
   }
 }
 
+function normalizeImageHost(hostname = "") {
+  const host = hostname.toLowerCase().replace(/^www\./, "");
+  if (/(tiktokcdn|byteimg|ibyteimg|ibytedtos|muscdn)/i.test(host)) {
+    return "byted-cdn";
+  }
+  return host;
+}
+
+function extractStableSearch(parsed) {
+  const keepParams = ["id", "item_id", "photo_id", "web_uri", "uri", "image_id", "file_id"];
+  const stable = [];
+  keepParams.forEach((key) => {
+    const value = parsed.searchParams.get(key);
+    if (value) stable.push(`${key}=${value}`);
+  });
+  return stable.join("&");
+}
+
+function extractStablePathToken(cleanPath) {
+  const parts = cleanPath.split("/").filter(Boolean);
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const token = parts[index].replace(/\.[a-z0-9]+$/i, "");
+    if (token.length >= 16 && /[a-z0-9_-]{16,}/i.test(token)) {
+      return token.toLowerCase();
+    }
+  }
+  return "";
+}
+
 function getImageIdentity(url) {
   try {
     const parsed = new URL(url);
+    const hostKey = normalizeImageHost(parsed.hostname);
     const cleanPath = parsed.pathname
-      .replace(/~tplv-[^/.?]+/gi, "")
+      .replace(/~?tplv-[^/]+/gi, "")
       .replace(/\/+$/g, "")
       .toLowerCase();
-    return `${parsed.hostname.toLowerCase()}${cleanPath}`;
+    const stableSearch = extractStableSearch(parsed);
+    const stableToken = extractStablePathToken(cleanPath);
+
+    if (hostKey === "byted-cdn" && stableToken) {
+      return `${hostKey}:${stableToken}${stableSearch ? `?${stableSearch}` : ""}`;
+    }
+
+    return `${hostKey}${cleanPath}${stableSearch ? `?${stableSearch}` : ""}`;
   } catch {
     return String(url || "").toLowerCase();
   }
@@ -286,6 +323,7 @@ function toScoredImages(items) {
   return uniqueByUrl(items)
     .map((item) => ({
       ...item,
+      identity: item.identity || getImageIdentity(item.url),
       score: scoreImageUrl(item.url, item.source),
     }))
     .filter((item) => item.score > -3)

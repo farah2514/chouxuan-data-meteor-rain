@@ -144,10 +144,11 @@ function mapImagesToCandidates(images, groupKey, groupLabel, sourceUrl, groupInd
       renderSrc: `/proxy-image?url=${encodeURIComponent(item.url)}`,
       proxyUrl: `/proxy-image?url=${encodeURIComponent(item.url)}`,
       originalUrl: item.url,
+      dedupeKey: item.identity || item.dedupeKey || item.url,
       groupKey,
       groupLabel,
       sourceUrl,
-      selectionKey: `${groupKey}::${item.url}`,
+      selectionKey: `${groupKey}::${item.identity || item.dedupeKey || item.url}`,
     })
   );
 }
@@ -184,10 +185,13 @@ function createCandidate(base) {
     renderSrc: base.renderSrc || base.src,
     proxyUrl: base.proxyUrl || base.renderSrc || base.src,
     originalUrl: base.originalUrl || base.src,
+    dedupeKey: base.dedupeKey || base.identity || base.originalUrl || base.src,
     groupKey: base.groupKey || "default",
     groupLabel: base.groupLabel || "当前分组",
     sourceUrl: base.sourceUrl || "",
-    selectionKey: base.selectionKey || `${base.groupKey || "default"}::${base.originalUrl || base.src}`,
+    selectionKey:
+      base.selectionKey ||
+      `${base.groupKey || "default"}::${base.dedupeKey || base.identity || base.originalUrl || base.src}`,
     duration: base.duration || state.defaultGifDuration,
     broken: false,
   };
@@ -196,7 +200,7 @@ function createCandidate(base) {
 function dedupeCandidates() {
   const map = new Map();
   state.candidates.forEach((item) => {
-    const key = `${item.groupKey || "default"}::${item.originalUrl || item.src || item.id}`;
+    const key = `${item.groupKey || "default"}::${item.dedupeKey || item.originalUrl || item.src || item.id}`;
     if (!map.has(key)) {
       map.set(key, item);
     }
