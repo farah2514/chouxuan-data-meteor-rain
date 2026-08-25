@@ -674,6 +674,56 @@
       min-height: 120px;
     }
 
+    .chip-picker {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-height: 48px;
+      padding: 10px;
+      border: 1px solid #d9d9d9;
+      border-radius: 14px;
+      background: #ffffff;
+      align-content: flex-start;
+    }
+
+    .chip-picker.is-disabled {
+      background: #f7f7f7;
+      color: #999999;
+    }
+
+    .chip-picker.empty {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 12px;
+      font-size: 13px;
+      color: #666666;
+      text-align: left;
+    }
+
+    .chip-option {
+      appearance: none;
+      border: 1px solid #d9d9d9;
+      background: #ffffff;
+      color: #111111;
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 13px;
+      line-height: 1.2;
+      cursor: pointer;
+      transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+
+    .chip-option:hover {
+      border-color: #111111;
+    }
+
+    .chip-option.active {
+      background: #111111;
+      color: #ffffff;
+      border-color: #111111;
+    }
+
     .sample-count-cell {
       background: #fffdf3;
     }
@@ -1200,13 +1250,13 @@
             </div>
             <div class="field">
               <label for="balanceField">均衡字段，多选</label>
-              <select id="balanceField" multiple disabled></select>
+              <div id="balanceField" class="chip-picker empty">请先读取数据</div>
             </div>
             <div class="field">
               <label for="balanceValues">包含哪些值，多选</label>
-              <select id="balanceValues" class="balance-values" multiple disabled></select>
+              <div id="balanceValues" class="chip-picker empty">请先选择均衡字段</div>
             </div>
-            <div class="hint">按住 `Command` 可多选。</div>
+            <div class="hint">点一下选中，再点一下取消。</div>
           </div>
 
           <div id="sidebarPlanSection" class="sidebar-plan-section">
@@ -1556,6 +1606,71 @@
       selectEl.disabled = false;
     }
 
+    function renderChipPicker(container, items, selectedValues, placeholder, onToggle) {
+      const selected = new Set(selectedValues || []);
+      container.innerHTML = "";
+      container.classList.remove("empty", "is-disabled");
+
+      if (!items || !items.length) {
+        container.classList.add("empty", "is-disabled");
+        container.textContent = placeholder || "暂无可选项";
+        return;
+      }
+
+      items.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "chip-option";
+        button.textContent = item.label;
+        button.dataset.value = item.value;
+        button.classList.toggle("active", selected.has(item.value));
+        button.addEventListener("click", () => onToggle(item.value));
+        container.appendChild(button);
+      });
+    }
+
+    function toggleInArray(list, value) {
+      const current = Array.isArray(list) ? [...list] : [];
+      const index = current.indexOf(value);
+      if (index >= 0) current.splice(index, 1);
+      else current.push(value);
+      return current;
+    }
+
+    function handleBalanceFieldToggle(value) {
+      state.balanceFields = toggleInArray(state.balanceFields, value);
+      state.balanceValues = [];
+      state.sampledRows = [];
+      state.previewPage = 1;
+      els.exportSampleBtn.disabled = true;
+      renderBalanceFieldPicker();
+      updateBalanceValueOptions();
+      refreshStats();
+      renderDataPreview();
+      renderSidebarPlan();
+    }
+
+    function handleBalanceValueToggle(value) {
+      state.balanceValues = toggleInArray(state.balanceValues, value);
+      state.sampledRows = [];
+      state.previewPage = 1;
+      els.exportSampleBtn.disabled = true;
+      updateBalanceValueOptions();
+      refreshStats();
+      renderDataPreview();
+      renderSidebarPlan();
+    }
+
+    function renderBalanceFieldPicker() {
+      renderChipPicker(
+        els.balanceField,
+        state.headers.map((value) => ({ value, label: value })),
+        state.balanceFields,
+        "请先读取数据",
+        handleBalanceFieldToggle
+      );
+    }
+
     function objectRowsFromWorksheet(worksheet, range) {
       const sheetRef = worksheet["!ref"];
       if (!sheetRef) return [];
@@ -1680,14 +1795,8 @@
 
     function updateBalanceValueOptions() {
       const selectedFields = state.balanceFields || [];
-      const selected = new Set(state.balanceValues || []);
-      els.balanceValues.innerHTML = "";
       if (!selectedFields.length) {
-        const option = document.createElement("option");
-        option.value = "";
-        option.textContent = "请先选择均衡字段";
-        els.balanceValues.appendChild(option);
-        els.balanceValues.disabled = true;
+        renderChipPicker(els.balanceValues, [], [], "请先选择均衡字段", () => {});
         return;
       }
 
@@ -1702,21 +1811,19 @@
       });
 
       if (!options.length) {
-        const option = document.createElement("option");
-        option.value = "";
-        option.textContent = "当前字段没有可选值";
-        els.balanceValues.appendChild(option);
-        els.balanceValues.disabled = true;
+        renderChipPicker(els.balanceValues, [], [], "当前字段没有可选值", () => {});
         return;
       }
 
-      els.balanceValues.disabled = false;
-      options.forEach(item => {
-        const option = document.createElement("option");
-        option.value = item.value;
-        option.textContent = item.label;
-        option.selected = selected.has(item.value);
-        els.balanceValues.appendChild(option);
+      renderChipPicker(els.balanceValues, options, state.balanceValues || [], (selectedFields.length > 0 ? "" : "请先选择均衡字段"), (value) => {
+        state.balanceValues = toggleInArray(state.balanceValues, value);
+        state.sampledRows = [];
+        state.previewPage = 1;
+        els.exportSampleBtn.disabled = true;
+        updateBalanceValueOptions();
+        refreshStats();
+        renderDataPreview();
+        renderSidebarPlan();
       });
     }
 
@@ -1848,19 +1955,9 @@
       const preferred = detectPreferredCategory(state.headers);
       state.categoryField = preferred;
       els.categoryField.value = preferred;
-      els.balanceField.innerHTML = "";
-      state.headers.forEach(header => {
-        const option = document.createElement("option");
-        option.value = header;
-        option.textContent = header;
-        els.balanceField.appendChild(option);
-      });
       const preferredBalance = detectPreferredBalanceField(state.headers);
       state.balanceFields = preferredBalance ? [preferredBalance] : [];
-      Array.from(els.balanceField.options).forEach(option => {
-        option.selected = state.balanceFields.includes(option.value);
-      });
-      els.balanceField.disabled = !state.headers.length;
+      renderBalanceFieldPicker();
       updateBalanceValueOptions();
     }
 
@@ -2286,12 +2383,10 @@
       state.balanceValues = [];
       buildSelectOptions(els.sheetSelect, [], "请先上传文件");
       buildSelectOptions(els.categoryField, [], "请先读取数据");
-      buildSelectOptions(els.balanceField, [], "请先读取数据");
       els.sheetSelect.disabled = true;
       els.categoryField.disabled = true;
-      els.balanceField.disabled = true;
-      els.balanceValues.innerHTML = '<option>请先读取数据</option>';
-      els.balanceValues.disabled = true;
+      renderChipPicker(els.balanceField, [], [], "请先读取数据", () => {});
+      renderChipPicker(els.balanceValues, [], [], "请先选择均衡字段", () => {});
       els.rangeInput.value = "";
       els.fileInput.value = "";
       els.larkUrlInput.value = "";
@@ -2434,28 +2529,6 @@
       state.sampledRows = [];
       state.previewPage = 1;
       regenerateSummaryIfPossible();
-      els.exportSampleBtn.disabled = true;
-      refreshStats();
-      renderDataPreview();
-      renderSidebarPlan();
-    });
-
-    els.balanceField.addEventListener("change", () => {
-      state.balanceFields = getSelectedMultiValues(els.balanceField);
-      state.balanceValues = [];
-      state.sampledRows = [];
-      state.previewPage = 1;
-      updateBalanceValueOptions();
-      els.exportSampleBtn.disabled = true;
-      refreshStats();
-      renderDataPreview();
-      renderSidebarPlan();
-    });
-
-    els.balanceValues.addEventListener("change", () => {
-      state.balanceValues = getSelectedMultiValues(els.balanceValues);
-      state.sampledRows = [];
-      state.previewPage = 1;
       els.exportSampleBtn.disabled = true;
       refreshStats();
       renderDataPreview();
