@@ -719,7 +719,7 @@ class Handler(SimpleHTTPRequestHandler):
             }
         if has_feishu_api_config():
             return {
-                "mode": "tenant",
+                "mode": "user_required",
                 "access_token": "",
                 "session": None,
             }
@@ -728,6 +728,12 @@ class Handler(SimpleHTTPRequestHandler):
             "access_token": "",
             "session": None,
         }
+
+    def require_user_feishu_context(self):
+        auth_context = self.get_effective_feishu_context()
+        if auth_context["mode"] == "user_required":
+            raise RuntimeError("请先点右上角“连接飞书”完成授权；如果刚改过权限，请先退出再重新授权一次。")
+        return auth_context
 
     def handle_auth_status(self):
         authorized = False
@@ -842,8 +848,8 @@ class Handler(SimpleHTTPRequestHandler):
                 url = (payload.get("url") or "").strip()
                 if not url:
                     return self.send_json({"ok": False, "error": "请先输入飞书表格链接。"}, 400)
-                auth_context = self.get_effective_feishu_context()
-                if auth_context["mode"] in {"user", "tenant"}:
+                auth_context = self.require_user_feishu_context()
+                if auth_context["mode"] == "user":
                     spreadsheet_token = parse_spreadsheet_token(url)
                     sheets = fetch_feishu_sheets(spreadsheet_token, access_token=auth_context["access_token"])
                     data = {
@@ -880,8 +886,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if not sheet_id:
                     return self.send_json({"ok": False, "error": "请先选择工作表。"}, 400)
 
-                auth_context = self.get_effective_feishu_context()
-                if auth_context["mode"] in {"user", "tenant"}:
+                auth_context = self.require_user_feishu_context()
+                if auth_context["mode"] == "user":
                     spreadsheet_token = parse_spreadsheet_token(url)
                     sheets = fetch_feishu_sheets(spreadsheet_token, access_token=auth_context["access_token"])
                     target_sheet = next((item for item in sheets if item.get("sheet_id") == sheet_id), None)
@@ -984,7 +990,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not sampled_row_ids:
                     return self.send_json({"ok": False, "error": "当前还没有抽中的记录，请先执行随机抽样。"}, 400)
                 dataset = build_export_dataset(headers, active_rows, sampled_row_ids, mode, "lark")
-                auth_context = self.get_effective_feishu_context()
+                auth_context = self.require_user_feishu_context()
                 created = create_lark_workbook(
                     title,
                     dataset["headers"],
