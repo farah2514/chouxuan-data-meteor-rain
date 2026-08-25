@@ -168,10 +168,21 @@
         sampler: "/sampler/index.html",
       };
 
+      function buildFrameSrc(targetSrc) {
+        if (targetSrc !== tabMap.sampler) return targetSrc;
+        const rootParams = new URLSearchParams(window.location.search);
+        const frameUrl = new URL(targetSrc, window.location.origin);
+        ["larkAuth", "message"].forEach((key) => {
+          const value = rootParams.get(key);
+          if (value) frameUrl.searchParams.set(key, value);
+        });
+        return frameUrl.pathname + frameUrl.search;
+      }
+
       function activateTab(targetSrc) {
         const resolvedSrc = targetSrc || tabMap.collage;
         buttons.forEach((item) => item.classList.toggle("active", item.dataset.src === resolvedSrc));
-        frame.src = resolvedSrc;
+        frame.src = buildFrameSrc(resolvedSrc);
       }
 
       buttons.forEach((button) => {

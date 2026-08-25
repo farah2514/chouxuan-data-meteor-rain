@@ -448,10 +448,10 @@
       justify-content: space-between;
       gap: 14px;
       padding: 14px 16px;
-      border: 2px solid rgba(239, 207, 218, 0.95);
+      border: 1px solid #d9d9d9;
       border-radius: 22px;
-      background: linear-gradient(180deg, #fffaf6 0%, #fff2f7 100%);
-      box-shadow: 0 8px 18px rgba(233, 205, 183, 0.12);
+      background: #ffffff;
+      box-shadow: none;
     }
 
     .lark-auth-banner[hidden] {
@@ -499,7 +499,7 @@
       gap: 6px;
       padding: 5px 10px;
       border-radius: 999px;
-      background: #f4f4f4;
+      background: #ffffff;
       border: 1px solid #d8d8d8;
       color: #111111;
       font-size: 12px;
@@ -959,6 +959,7 @@
 
     .hero,
     .panel,
+    .lark-auth-banner,
     .stat-card,
     .balance-box,
     .sidebar-plan-section,
@@ -995,6 +996,13 @@
 
     .divider {
       background: #e3e3e3 !important;
+    }
+
+    .lark-auth-banner,
+    .lark-connected-dot {
+      background: #ffffff !important;
+      border-color: #d9d9d9 !important;
+      box-shadow: none !important;
     }
 
     input[type="text"],
@@ -1287,6 +1295,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script>
+    const LARK_AUTH_STORAGE_KEY = "sampler_lark_auth_connected";
     const state = {
       workbook: null,
       workbookType: "",
@@ -1736,29 +1745,53 @@
       els.previewMeta.textContent = meta.length ? meta.join(" | ") : "等待上传";
     }
 
+    function getStoredLarkAuthFlag() {
+      try {
+        return window.localStorage.getItem(LARK_AUTH_STORAGE_KEY) === "1";
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function setStoredLarkAuthFlag(connected) {
+      try {
+        if (connected) {
+          window.localStorage.setItem(LARK_AUTH_STORAGE_KEY, "1");
+        } else {
+          window.localStorage.removeItem(LARK_AUTH_STORAGE_KEY);
+        }
+      } catch (error) {}
+    }
+
     function updateLarkAuthUI(auth) {
       const configured = Boolean(auth && auth.configured);
       const authorized = Boolean(auth && auth.authorized);
+      const shouldShowConnected = authorized || (configured && getStoredLarkAuthFlag());
       const userName = auth?.user?.name || auth?.user?.en_name || auth?.user?.email || "";
 
       els.larkAuthBtn.disabled = !configured;
-      els.larkAuthBtn.textContent = authorized ? "重新授权飞书" : "连接飞书";
-      els.larkAuthBanner.hidden = authorized;
-      els.larkConnectedCorner.hidden = !authorized;
+      els.larkAuthBtn.textContent = shouldShowConnected ? "重新授权飞书" : "连接飞书";
+      els.larkAuthBanner.hidden = shouldShowConnected;
+      els.larkConnectedCorner.hidden = !shouldShowConnected;
       els.larkConnectedLabel.textContent = "已连接飞书";
       els.larkConnectedLabel.title = userName ? `当前已连接：${userName}` : "当前已连接飞书";
 
       if (!configured) {
+        setStoredLarkAuthFlag(false);
         els.larkAuthState.textContent = "当前服务还没配好飞书应用，先把 App ID 和 App Secret 配上才能授权。";
         return;
       }
       if (authorized) {
+        setStoredLarkAuthFlag(true);
         els.larkAuthState.textContent = userName
           ? `已连接飞书：${userName}。现在可以读取你有权限的飞书表格。`
           : "已连接飞书，现在可以读取你有权限的飞书表格。";
         return;
       }
       if (auth?.error) {
+        if (!getStoredLarkAuthFlag()) {
+          setStoredLarkAuthFlag(false);
+        }
         els.larkAuthState.textContent = `飞书授权状态异常：${auth.error}`;
         return;
       }
@@ -1798,6 +1831,7 @@
       window.history.replaceState({}, "", nextUrl.pathname + nextUrl.search + nextUrl.hash);
 
       if (authStatus === "success") {
+        setStoredLarkAuthFlag(true);
         showDialog({
           title: "飞书已连接",
           message: "授权完成了，现在可以直接读取你自己的飞书表格。",
@@ -2363,6 +2397,7 @@
     async function handleLarkLogout() {
       try {
         await postJson("/api/lark/auth/logout", {});
+        setStoredLarkAuthFlag(false);
         await refreshLarkAuthStatus();
         showDialog({
           title: "已退出飞书",
