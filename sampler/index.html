@@ -1340,7 +1340,6 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script>
-    const LARK_AUTH_STORAGE_KEY = "sampler_lark_auth_connected";
     const state = {
       workbook: null,
       workbookType: "",
@@ -1847,28 +1846,10 @@
       els.previewMeta.textContent = meta.length ? meta.join(" | ") : "等待上传";
     }
 
-    function getStoredLarkAuthFlag() {
-      try {
-        return window.localStorage.getItem(LARK_AUTH_STORAGE_KEY) === "1";
-      } catch (error) {
-        return false;
-      }
-    }
-
-    function setStoredLarkAuthFlag(connected) {
-      try {
-        if (connected) {
-          window.localStorage.setItem(LARK_AUTH_STORAGE_KEY, "1");
-        } else {
-          window.localStorage.removeItem(LARK_AUTH_STORAGE_KEY);
-        }
-      } catch (error) {}
-    }
-
     function updateLarkAuthUI(auth) {
       const configured = Boolean(auth && auth.configured);
       const authorized = Boolean(auth && auth.authorized);
-      const shouldShowConnected = authorized || (configured && getStoredLarkAuthFlag());
+      const shouldShowConnected = authorized;
       const userName = auth?.user?.name || auth?.user?.en_name || auth?.user?.email || "";
 
       els.larkAuthBtn.disabled = !configured;
@@ -1879,21 +1860,16 @@
       els.larkConnectedLabel.title = userName ? `当前已连接：${userName}` : "当前已连接飞书";
 
       if (!configured) {
-        setStoredLarkAuthFlag(false);
         els.larkAuthState.textContent = "当前服务还没配好飞书应用，先把 App ID 和 App Secret 配上才能授权。";
         return;
       }
       if (authorized) {
-        setStoredLarkAuthFlag(true);
         els.larkAuthState.textContent = userName
           ? `已连接飞书：${userName}。现在可以读取你有权限的飞书表格。`
           : "已连接飞书，现在可以读取你有权限的飞书表格。";
         return;
       }
       if (auth?.error) {
-        if (!getStoredLarkAuthFlag()) {
-          setStoredLarkAuthFlag(false);
-        }
         els.larkAuthState.textContent = `飞书授权状态异常：${auth.error}`;
         return;
       }
@@ -1933,7 +1909,6 @@
       window.history.replaceState({}, "", nextUrl.pathname + nextUrl.search + nextUrl.hash);
 
       if (authStatus === "success") {
-        setStoredLarkAuthFlag(true);
         showDialog({
           title: "飞书已连接",
           message: "授权完成了，现在可以直接读取你自己的飞书表格。",
@@ -2485,7 +2460,6 @@
     async function handleLarkLogout() {
       try {
         await postJson("/api/lark/auth/logout", {});
-        setStoredLarkAuthFlag(false);
         await refreshLarkAuthStatus();
         showDialog({
           title: "已退出飞书",
