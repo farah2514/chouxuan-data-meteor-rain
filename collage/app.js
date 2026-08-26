@@ -755,13 +755,14 @@ function renderCandidates() {
       const selected = state.selectedCandidateKeys.has(candidateKey);
       const direct = item.directSrc || item.previewSrc || item.src;
       const proxy = item.proxyUrl || item.renderSrc || direct;
+      const preferredVideoSrc = item.kind === "local" ? direct : proxy;
       const thumbMarkup =
         item.mediaType === "video"
           ? `
           <div class="candidate-video-shell">
             <video
               class="candidate-thumb candidate-thumb-video"
-              src="${escapeHtml(direct)}"
+              src="${escapeHtml(preferredVideoSrc)}"
               data-direct-src="${escapeHtml(direct)}"
               data-proxy-src="${escapeHtml(proxy)}"
               data-candidate-id="${escapeHtml(item.id)}"
@@ -921,7 +922,7 @@ function renderCandidates() {
           current.videoDuration = video.duration;
           normalizeVideoClip(current);
         }
-        await seekVideo(video, 0);
+        await seekVideo(video, getVideoPreviewTime(video.duration));
         video.play().catch(() => {});
       } catch {}
     });
@@ -1083,6 +1084,7 @@ function renderVideoClipEditors(groupKey = null) {
     .map((item, index) => {
       const direct = item.directSrc || item.previewSrc || item.src;
       const proxy = item.proxyUrl || item.renderSrc || direct;
+      const preferredVideoSrc = item.kind === "local" ? direct : proxy;
       const clip = normalizeVideoClip(item);
       const max = clip.duration > 0 ? clip.duration : Math.max(6, clip.end);
       const clipLength = Math.max(0.1, clip.end - clip.start);
@@ -1095,7 +1097,7 @@ function renderVideoClipEditors(groupKey = null) {
           <div class="clip-editor-stage">
             <video
               class="clip-editor-video"
-              src="${escapeHtml(direct)}"
+              src="${escapeHtml(preferredVideoSrc)}"
               data-direct-src="${escapeHtml(direct)}"
               data-proxy-src="${escapeHtml(proxy)}"
               data-clip-video-id="${escapeHtml(item.id)}"

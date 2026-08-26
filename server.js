@@ -986,7 +986,7 @@ async function handleExtract(reqUrl, res) {
   sendJson(res, 200, payload);
 }
 
-async function handleProxyMedia(reqUrl, res) {
+async function handleProxyMedia(req, reqUrl, res) {
   const target = reqUrl.searchParams.get("url");
   if (!target) {
     res.writeHead(400, {
@@ -1048,7 +1048,7 @@ async function handleProxyMedia(reqUrl, res) {
 
     const buffer = Buffer.from(await response.arrayBuffer());
     const contentType = response.headers.get("content-type") || "application/octet-stream";
-    res.writeHead(200, {
+    res.writeHead(response.status, {
       "Content-Type": contentType,
       "Cache-Control": "public, max-age=3600",
       "Access-Control-Allow-Origin": "*",
@@ -1208,7 +1208,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (reqUrl.pathname === "/proxy-image" || reqUrl.pathname === "/proxy-media") {
-    await handleProxyMedia(reqUrl, res);
+    await handleProxyMedia(req, reqUrl, res);
     return;
   }
 
