@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>综合网页工具</title>
+    <title>三页工具台</title>
     <style>
       :root {
         color-scheme: light;
@@ -143,20 +143,21 @@
   <body>
     <div class="shell">
       <section class="topbar">
-        <h1>工具台</h1>
-        <p>切换就能用。</p>
+        <h1>三页工具台</h1>
+        <p>拼图、转 GIF、分类抽样分开用。</p>
       </section>
 
       <section class="toolbar">
         <div class="tab-list">
-          <button class="tab-btn active" data-src="/collage/index.html">图片拼图</button>
+          <button class="tab-btn active" data-src="/collage/index.html?mode=png">拼图</button>
+          <button class="tab-btn" data-src="/collage/index.html?mode=gif">转 GIF</button>
           <button class="tab-btn" data-src="/sampler/index.html">分类抽样</button>
         </div>
         <div class="toolbar-note"></div>
       </section>
 
       <section class="frame-card">
-        <iframe id="toolFrame" src="/collage/index.html" title="综合工具内容区"></iframe>
+        <iframe id="toolFrame" src="/collage/index.html?mode=png" title="综合工具内容区"></iframe>
       </section>
     </div>
 
@@ -164,7 +165,8 @@
       const frame = document.getElementById("toolFrame");
       const buttons = Array.from(document.querySelectorAll(".tab-btn"));
       const tabMap = {
-        collage: "/collage/index.html",
+        collage: "/collage/index.html?mode=png",
+        gif: "/collage/index.html?mode=gif",
         sampler: "/sampler/index.html",
       };
 

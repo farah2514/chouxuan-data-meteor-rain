@@ -29,6 +29,9 @@ const state = {
   selectedPreviewGroupKeys: new Set(),
 };
 
+const pageParams = new URLSearchParams(window.location.search);
+const pageMode = pageParams.get("mode") === "gif" ? "gif" : "png";
+
 const elements = {
   fileInput: document.getElementById("fileInput"),
   dropZone: document.getElementById("dropZone"),
@@ -222,6 +225,7 @@ function getSelectedImages(groupKey = null) {
     (item) =>
       state.selectedCandidateKeys.has(getCandidateKey(item)) &&
       !item.broken &&
+      (pageMode === "gif" ? true : item.mediaType !== "video") &&
       (groupKey ? item.groupKey === groupKey : true)
   );
 }
@@ -276,6 +280,7 @@ function updatePngScaleButtons() {
 function updateExportModeButtons() {
   elements.exportModeButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.exportMode === state.exportMode);
+    button.disabled = pageMode === "png" || pageMode === "gif";
   });
   elements.pngSettings.classList.toggle("hidden", state.exportMode !== "png");
   elements.gifSettings.classList.toggle("hidden", state.exportMode !== "gif");
@@ -648,6 +653,7 @@ function renderCandidates() {
   elements.candidateGrid.className = "candidate-list";
   const grouped = new Map();
   const visibleCandidates = state.candidates.filter((item) => {
+    if (pageMode === "png" && item.mediaType === "video") return false;
     if (state.candidateFilter === "all") return true;
     return item.mediaType === state.candidateFilter;
   });
@@ -1616,6 +1622,7 @@ function bindEvents() {
 }
 
 function init() {
+  state.exportMode = pageMode;
   updateRangeLabels();
   updateLayoutButtons();
   updateExportModeButtons();
@@ -1626,6 +1633,20 @@ function init() {
   elements.gifBackgroundColor.value = state.backgroundColor;
   renderCandidates();
   bindEvents();
+
+  if (pageMode === "png") {
+    document.title = "拼图工具";
+    const title = document.querySelector(".panel-title h2");
+    if (title) title.textContent = "拼图设置";
+    const uploadText = elements.dropZone?.querySelector("p");
+    const uploadHint = elements.dropZone?.querySelector("span");
+    if (uploadText) uploadText.textContent = "上传图片";
+    if (uploadHint) uploadHint.textContent = "拖拽或点击选择，只用于拼图";
+  } else {
+    document.title = "转 GIF 工具";
+    const title = document.querySelector(".panel-title h2");
+    if (title) title.textContent = "转 GIF 设置";
+  }
 }
 
 init();
