@@ -13,8 +13,11 @@ const state = {
   gifWidth: 960,
   gifHeight: 960,
   defaultGifDuration: 0.9,
+  videoClipStart: 0,
+  videoClipDuration: 3,
   gifRepeatMode: "forever",
   gifRepeatCount: 3,
+  candidateFilter: "all",
   candidates: [],
   selectedCandidateKeys: new Set(),
   draggingId: null,
@@ -52,6 +55,8 @@ const elements = {
   gifWidthInput: document.getElementById("gifWidthInput"),
   gifHeightInput: document.getElementById("gifHeightInput"),
   gifDurationInput: document.getElementById("gifDurationInput"),
+  gifVideoStartInput: document.getElementById("gifVideoStartInput"),
+  gifVideoClipInput: document.getElementById("gifVideoClipInput"),
   gifRepeatCountWrap: document.getElementById("gifRepeatCountWrap"),
   gifRepeatCountInput: document.getElementById("gifRepeatCountInput"),
   applyGifDurationBtn: document.getElementById("applyGifDurationBtn"),
@@ -71,6 +76,7 @@ const elements = {
   exportModeButtons: document.querySelectorAll("[data-export-mode]"),
   pngScaleButtons: document.querySelectorAll("[data-png-scale]"),
   gifRepeatButtons: document.querySelectorAll("[data-gif-repeat-mode]"),
+  candidateFilterButtons: document.querySelectorAll("[data-candidate-filter]"),
 };
 
 let imageCounter = 0;
@@ -286,6 +292,12 @@ function updateGifRepeatButtons() {
     button.classList.toggle("active", button.dataset.gifRepeatMode === state.gifRepeatMode);
   });
   elements.gifRepeatCountWrap.classList.toggle("hidden", state.gifRepeatMode !== "custom");
+}
+
+function updateCandidateFilterButtons() {
+  elements.candidateFilterButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.candidateFilter === state.candidateFilter);
+  });
 }
 
 function getGifRepeatValue() {
@@ -635,7 +647,18 @@ function renderCandidates() {
 
   elements.candidateGrid.className = "candidate-list";
   const grouped = new Map();
-  state.candidates.forEach((item) => {
+  const visibleCandidates = state.candidates.filter((item) => {
+    if (state.candidateFilter === "all") return true;
+    return item.mediaType === state.candidateFilter;
+  });
+
+  if (!visibleCandidates.length) {
+    elements.candidateGrid.className = "candidate-list empty";
+    elements.candidateGrid.innerHTML = "<p>当前筛选下没有素材</p>";
+    return;
+  }
+
+  visibleCandidates.forEach((item) => {
     if (!grouped.has(item.groupKey)) {
       grouped.set(item.groupKey, {
         key: item.groupKey,
@@ -919,11 +942,12 @@ async function buildGifFrames(groupKey = null) {
     if (item.mediaType === "video") {
       const video = await loadVideoElement(item.renderSrc || item.directSrc || item.previewSrc || item.src);
       const videoDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
-      const clipDuration = Math.max(0.8, item.duration || state.defaultGifDuration);
+      const clipStart = Math.max(0, Math.min(state.videoClipStart || 0, Math.max(0, videoDuration - 0.2)));
+      const clipDuration = Math.max(0.5, Math.min(state.videoClipDuration || 3, Math.max(0.5, videoDuration - clipStart)));
       const frameCount = Math.max(4, Math.min(18, Math.round(clipDuration * 4)));
       for (let index = 0; index < frameCount; index += 1) {
         const progress = frameCount === 1 ? 0 : index / (frameCount - 1);
-        await seekVideo(video, progress * videoDuration);
+        await seekVideo(video, clipStart + progress * clipDuration);
         frames.push({
           item: { ...item, duration: Math.max(0.08, clipDuration / frameCount) },
           img: captureVideoFrame(video),
@@ -1539,6 +1563,22 @@ function bindEvents() {
     elements.gifDurationInput.value = state.defaultGifDuration;
   });
 
+  elements.gifVideoStartInput.addEventListener("change", () => {
+    state.videoClipStart = parsePositiveFloat(elements.gifVideoStartInput.value, state.videoClipStart, 0, 600);
+    elements.gifVideoStartInput.value = state.videoClipStart;
+    if (state.exportMode === "gif") {
+      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    }
+  });
+
+  elements.gifVideoClipInput.addEventListener("change", () => {
+    state.videoClipDuration = parsePositiveFloat(elements.gifVideoClipInput.value, state.videoClipDuration, 0.5, 60);
+    elements.gifVideoClipInput.value = state.videoClipDuration;
+    if (state.exportMode === "gif") {
+      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    }
+  });
+
   elements.gifRepeatButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.gifRepeatMode = button.dataset.gifRepeatMode;
@@ -1565,6 +1605,14 @@ function bindEvents() {
       extractImagesFromPage();
     }
   });
+
+  elements.candidateFilterButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.candidateFilter = button.dataset.candidateFilter || "all";
+      updateCandidateFilterButtons();
+      renderCandidates();
+    });
+  });
 }
 
 function init() {
@@ -1573,6 +1621,7 @@ function init() {
   updateExportModeButtons();
   updatePngScaleButtons();
   updateGifRepeatButtons();
+  updateCandidateFilterButtons();
   updateAssistButtons();
   elements.gifBackgroundColor.value = state.backgroundColor;
   renderCandidates();

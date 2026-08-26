@@ -653,6 +653,12 @@ button.ghost.danger,
   margin-bottom: 12px;
 }
 
+.candidate-filter-row {
+  position: relative;
+  z-index: 1;
+  margin: -4px 0 12px;
+}
+
 .image-grid,
 .candidate-list {
   position: relative;
@@ -915,6 +921,10 @@ button.ghost.danger,
   border: 2px solid rgba(243, 216, 167, 0.96);
 }
 
+.segmented-compact {
+  width: fit-content;
+}
+
 .segment {
   background: transparent;
   color: var(--muted);
@@ -965,7 +975,7 @@ input[type="range"] {
 
 .control-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
 
