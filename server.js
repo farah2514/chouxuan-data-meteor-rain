@@ -380,7 +380,31 @@ function filterTikTokImages(items) {
   });
 
   if (videoPrimary.length) {
-    return toScoredImages(videoPrimary).slice(0, 8);
+    const coverCandidates = cleaned.filter((item) => {
+      const source = String(item.source || "").toLowerCase();
+      const value = String(item.url || "").toLowerCase();
+      if (item.mediaType === "video") return false;
+      return (
+        source.includes("poster") ||
+        source.includes("meta") ||
+        source.includes("link") ||
+        source.includes("background") ||
+        value.includes("cover") ||
+        value.includes("poster") ||
+        value.includes("thumb")
+      );
+    });
+
+    const videos = toScoredImages(videoPrimary).slice(0, 4).map((item) => ({
+      ...item,
+      postType: "video",
+    }));
+    const covers = toScoredImages(coverCandidates).slice(0, 3).map((item) => ({
+      ...item,
+      postType: "video",
+      mediaRole: "cover",
+    }));
+    return [...videos, ...covers];
   }
 
   const visiblePrimary = cleaned.filter((item) => {
@@ -389,8 +413,13 @@ function filterTikTokImages(items) {
     return source.includes("visible-large") || value.includes("photomode");
   });
 
-  const preferred = visiblePrimary.length ? visiblePrimary : cleaned;
-  return toScoredImages(preferred).slice(0, 8);
+  const preferred = visiblePrimary.length ? visiblePrimary : cleaned.filter((item) => item.mediaType !== "video");
+  return toScoredImages(preferred)
+    .slice(0, 8)
+    .map((item) => ({
+      ...item,
+      postType: "image",
+    }));
 }
 
 function getHostHint(hostname) {
@@ -925,6 +954,13 @@ async function handleExtract(reqUrl, res) {
   const images = isTikTokHost(parsed.hostname)
     ? filterTikTokImages(mergedImages)
     : toScoredImages(mergedImages);
+  const postType = isTikTokHost(parsed.hostname)
+    ? images.some((item) => item.postType === "video" || item.mediaType === "video")
+      ? "video"
+      : "image"
+    : images.some((item) => item.mediaType === "video")
+      ? "video"
+      : "image";
   if (!images.length) {
     sendJson(res, 422, {
       error: "没有提取到可用图片",
@@ -937,6 +973,7 @@ async function handleExtract(reqUrl, res) {
   const payload = {
     pageUrl: finalUrl,
     count: images.length,
+    postType,
     images,
     hint: isTikTokHost(parsed.hostname)
       ? shouldUseBrowser
