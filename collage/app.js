@@ -842,6 +842,12 @@ function renderCandidates() {
     video.addEventListener("error", () => {
       const current = state.candidates.find((item) => item.id === video.dataset.candidateId);
       if (!current) return;
+      if (!video.dataset.triedProxy && video.dataset.proxySrc && video.dataset.proxySrc !== video.dataset.directSrc) {
+        video.dataset.triedProxy = "1";
+        video.src = video.dataset.proxySrc;
+        video.load();
+        return;
+      }
       current.broken = true;
       state.selectedCandidateKeys.delete(getCandidateKey(current));
       renderCandidates();

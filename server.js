@@ -1024,6 +1024,7 @@ async function handleProxyMedia(reqUrl, res) {
     : `${parsed.protocol}//${parsed.host}/`;
 
   try {
+    const rangeHeader = req.headers.range;
     const response = await fetch(parsed.toString(), {
       headers: {
         "User-Agent":
@@ -1031,6 +1032,7 @@ async function handleProxyMedia(reqUrl, res) {
         Accept: "*/*",
         Referer: referer,
         Origin: referer.replace(/\/$/, ""),
+        ...(rangeHeader ? { Range: rangeHeader } : {}),
       },
       redirect: "follow",
     });
@@ -1050,6 +1052,13 @@ async function handleProxyMedia(reqUrl, res) {
       "Content-Type": contentType,
       "Cache-Control": "public, max-age=3600",
       "Access-Control-Allow-Origin": "*",
+      "Accept-Ranges": response.headers.get("accept-ranges") || "bytes",
+      ...(response.headers.get("content-range")
+        ? { "Content-Range": response.headers.get("content-range") }
+        : {}),
+      ...(response.headers.get("content-length")
+        ? { "Content-Length": response.headers.get("content-length") }
+        : {}),
     });
     res.end(buffer);
   } catch (error) {
