@@ -1645,7 +1645,11 @@
 
     function handleBalanceFieldToggle(value) {
       state.balanceFields = toggleInArray(state.balanceFields, value);
-      state.balanceValues = [];
+      const activeFieldSet = new Set(state.balanceFields || []);
+      state.balanceValues = (state.balanceValues || []).filter((token) => {
+        const [field] = String(token).split("::");
+        return activeFieldSet.has(field);
+      });
       state.sampledRows = [];
       state.previewPage = 1;
       els.exportSampleBtn.disabled = true;

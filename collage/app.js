@@ -1,4 +1,4 @@
-import { GIFEncoder, quantize, applyPalette } from "../node_modules/gifenc/dist/gifenc.esm.js";
+import { GIFEncoder, quantize, applyPalette } from "./vendor/gifenc.esm.js";
 
 const state = {
   layout: "horizontal",
@@ -54,12 +54,12 @@ const elements = {
   shadowToggle: document.getElementById("shadowToggle"),
   outlineToggle: document.getElementById("outlineToggle"),
   gifSettings: document.getElementById("gifSettings"),
+  gifImageSettings: document.getElementById("gifImageSettings"),
+  gifVideoSettings: document.getElementById("gifVideoSettings"),
   gifBackgroundColor: document.getElementById("gifBackgroundColor"),
   gifWidthInput: document.getElementById("gifWidthInput"),
   gifHeightInput: document.getElementById("gifHeightInput"),
   gifDurationInput: document.getElementById("gifDurationInput"),
-  gifVideoStartInput: document.getElementById("gifVideoStartInput"),
-  gifVideoClipInput: document.getElementById("gifVideoClipInput"),
   gifRepeatCountWrap: document.getElementById("gifRepeatCountWrap"),
   gifRepeatCountInput: document.getElementById("gifRepeatCountInput"),
   applyGifDurationBtn: document.getElementById("applyGifDurationBtn"),
@@ -69,6 +69,7 @@ const elements = {
   previewCanvas: document.getElementById("previewCanvas"),
   previewGif: document.getElementById("previewGif"),
   previewGallery: document.getElementById("previewGallery"),
+  videoClipEditors: document.getElementById("videoClipEditors"),
   emptyPreview: document.getElementById("emptyPreview"),
   previewWrap: document.querySelector(".preview-wrap"),
   previewModal: document.getElementById("previewModal"),
@@ -127,6 +128,16 @@ function simplifyName(value) {
   } catch {
     return value;
   }
+}
+
+function formatSecondsLabel(value) {
+  const safeValue = Math.max(0, Number(value) || 0);
+  return `${safeValue.toFixed(1)}s`;
+}
+
+function getVideoPreviewTime(duration) {
+  if (!Number.isFinite(duration) || duration <= 0.08) return 0;
+  return Math.min(0.08, Math.max(0, duration - 0.04));
 }
 
 function parseUrlList(rawValue) {
@@ -205,8 +216,35 @@ function createCandidate(base) {
     duration: base.duration || state.defaultGifDuration,
     mediaType: base.mediaType || "image",
     fileType: base.fileType || "",
+    videoDuration: base.videoDuration || 0,
+    clipStart: base.clipStart ?? 0,
+    clipEnd: base.clipEnd ?? 0,
     broken: false,
   };
+}
+
+function getGifSelectionSummary(groupKey = null) {
+  const items = getSelectedImages(groupKey);
+  const images = items.filter((item) => item.mediaType !== "video");
+  const videos = items.filter((item) => item.mediaType === "video");
+  return {
+    items,
+    images,
+    videos,
+    hasImage: images.length > 0,
+    hasVideo: videos.length > 0,
+  };
+}
+
+function normalizeVideoClip(item) {
+  const duration = item.videoDuration && Number.isFinite(item.videoDuration) ? item.videoDuration : 0;
+  const fallbackEnd = item.clipEnd || (item.clipStart || 0) + (state.videoClipDuration || 3);
+  const maxEnd = duration > 0 ? duration : Math.max(6, fallbackEnd);
+  const start = clamp(item.clipStart || 0, 0, Math.max(0, maxEnd - 0.1));
+  const end = clamp(fallbackEnd, start + 0.1, maxEnd);
+  item.clipStart = start;
+  item.clipEnd = end;
+  return { start, end, duration };
 }
 
 function dedupeCandidates() {
@@ -290,6 +328,14 @@ function updateExportModeButtons() {
     state.exportMode === "gif"
       ? "这里会显示完整动图预览"
       : "这里会显示完整预览";
+  updateGifSettingPanels();
+}
+
+function updateGifSettingPanels() {
+  if (!elements.gifSettings) return;
+  const summary = getGifSelectionSummary();
+  elements.gifImageSettings?.classList.toggle("hidden", !(state.exportMode === "gif" && summary.hasImage));
+  elements.gifVideoSettings?.classList.toggle("hidden", !(state.exportMode === "gif" && summary.hasVideo));
 }
 
 function updateGifRepeatButtons() {
@@ -390,16 +436,44 @@ function loadVideoElement(src) {
     video.preload = "auto";
     video.muted = true;
     video.playsInline = true;
-    video.crossOrigin = "anonymous";
+    if (/^https?:/i.test(String(src || ""))) {
+      video.crossOrigin = "anonymous";
+    }
+    let settled = false;
     const cleanup = () => {
       video.onloadeddata = null;
+      video.onloadedmetadata = null;
+      video.oncanplay = null;
       video.onerror = null;
     };
-    video.onloadeddata = () => {
+    const finish = async () => {
+      if (settled) return;
+      settled = true;
       cleanup();
-      resolve(video);
+      try {
+        const previewTime = getVideoPreviewTime(video.duration);
+        if (previewTime > 0) {
+          await seekVideo(video, previewTime).catch(() => {});
+        }
+        video.pause();
+        resolve(video);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    video.onloadedmetadata = () => {
+      if (video.readyState >= 1) {
+        finish();
+      }
+    };
+    video.oncanplay = () => {
+      finish();
+    };
+    video.onloadeddata = () => {
+      finish();
     };
     video.onerror = () => {
+      settled = true;
       cleanup();
       reject(new Error("视频加载失败"));
     };
@@ -692,6 +766,8 @@ function renderCandidates() {
               data-proxy-src="${escapeHtml(proxy)}"
               data-candidate-id="${escapeHtml(item.id)}"
               muted
+              autoplay
+              loop
               playsinline
               preload="metadata"
             ></video>
@@ -726,10 +802,14 @@ function renderCandidates() {
 
           <div class="card-body">
             <div class="selected-controls ${selected ? "" : "hidden"}">
-              <label class="mini-field">
-                <span>${item.mediaType === "video" ? "片段时长" : "时长"}</span>
-                <input class="mini-number" type="number" min="0.1" max="20" step="0.1" value="${item.duration}" data-duration-id="${escapeHtml(item.id)}" />
-              </label>
+              ${
+                item.mediaType === "video"
+                  ? `<div class="selected-meta">视频片段请在右侧预览区拖动开始和结束进度条</div>`
+                  : `<label class="mini-field">
+                      <span>时长</span>
+                      <input class="mini-number" type="number" min="0.1" max="20" step="0.1" value="${item.duration}" data-duration-id="${escapeHtml(item.id)}" />
+                    </label>`
+              }
               <div class="selected-actions">
                 <button class="remove-btn" data-remove-id="${escapeHtml(item.id)}" type="button">移除</button>
               </div>
@@ -836,7 +916,13 @@ function renderCandidates() {
   elements.candidateGrid.querySelectorAll("video.candidate-thumb-video").forEach((video) => {
     video.addEventListener("loadeddata", async () => {
       try {
+        const current = state.candidates.find((item) => item.id === video.dataset.candidateId);
+        if (current && Number.isFinite(video.duration) && video.duration > 0) {
+          current.videoDuration = video.duration;
+          normalizeVideoClip(current);
+        }
         await seekVideo(video, 0);
+        video.play().catch(() => {});
       } catch {}
     });
     video.addEventListener("error", () => {
@@ -853,6 +939,8 @@ function renderCandidates() {
       renderCandidates();
     });
   });
+
+  updateGifSettingPanels();
 }
 
 function drawPngComposition(canvas, loaded, renderScale = 1, displayScale = 1) {
@@ -953,9 +1041,16 @@ async function buildGifFrames(groupKey = null) {
   for (const item of selected) {
     if (item.mediaType === "video") {
       const video = await loadVideoElement(item.renderSrc || item.directSrc || item.previewSrc || item.src);
-      const videoDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
-      const clipStart = Math.max(0, Math.min(state.videoClipStart || 0, Math.max(0, videoDuration - 0.2)));
-      const clipDuration = Math.max(0.5, Math.min(state.videoClipDuration || 3, Math.max(0.5, videoDuration - clipStart)));
+      if (Number.isFinite(video.duration) && video.duration > 0) {
+        item.videoDuration = video.duration;
+      }
+      const clip = normalizeVideoClip(item);
+      const videoDuration = clip.duration > 0 ? clip.duration : 1;
+      const clipStart = Math.max(0, Math.min(clip.start, Math.max(0, videoDuration - 0.2)));
+      const clipDuration = Math.max(
+        0.5,
+        Math.min(Math.max(0.5, clip.end - clip.start), Math.max(0.5, videoDuration - clipStart))
+      );
       const frameCount = Math.max(4, Math.min(18, Math.round(clipDuration * 4)));
       for (let index = 0; index < frameCount; index += 1) {
         const progress = frameCount === 1 ? 0 : index / (frameCount - 1);
@@ -975,6 +1070,196 @@ async function buildGifFrames(groupKey = null) {
   return frames;
 }
 
+function renderVideoClipEditors(groupKey = null) {
+  if (!elements.videoClipEditors) return;
+  const { videos } = getGifSelectionSummary(groupKey);
+  if (!(state.exportMode === "gif" && videos.length)) {
+    elements.videoClipEditors.innerHTML = "";
+    elements.videoClipEditors.classList.add("hidden");
+    return;
+  }
+
+  elements.videoClipEditors.innerHTML = videos
+    .map((item, index) => {
+      const direct = item.directSrc || item.previewSrc || item.src;
+      const proxy = item.proxyUrl || item.renderSrc || direct;
+      const clip = normalizeVideoClip(item);
+      const max = clip.duration > 0 ? clip.duration : Math.max(6, clip.end);
+      const clipLength = Math.max(0.1, clip.end - clip.start);
+      return `
+        <div class="clip-editor-card">
+          <div class="clip-editor-head">
+            <strong>视频 ${index + 1}</strong>
+            <span>${escapeHtml(item.name || "未命名视频")}</span>
+          </div>
+          <div class="clip-editor-stage">
+            <video
+              class="clip-editor-video"
+              src="${escapeHtml(direct)}"
+              data-direct-src="${escapeHtml(direct)}"
+              data-proxy-src="${escapeHtml(proxy)}"
+              data-clip-video-id="${escapeHtml(item.id)}"
+              controls
+              muted
+              playsinline
+              preload="metadata"
+            ></video>
+            <button class="mini-btn ghost clip-preview-btn" data-clip-preview-id="${escapeHtml(item.id)}" type="button">预览片段</button>
+          </div>
+          <div class="clip-editor-labels clip-editor-summary">
+            <span data-start-label="${escapeHtml(item.id)}">开始 ${formatSecondsLabel(clip.start)}</span>
+            <span data-length-label="${escapeHtml(item.id)}">片段 ${formatSecondsLabel(clipLength)} / 全长 ${formatSecondsLabel(max)}</span>
+            <span data-end-label="${escapeHtml(item.id)}">结束 ${formatSecondsLabel(clip.end)}</span>
+          </div>
+          <div class="clip-editor-track-wrap">
+            <div class="clip-editor-track">
+              <div class="clip-editor-track-fill" data-clip-fill="${escapeHtml(item.id)}"></div>
+            </div>
+            <input class="clip-range clip-range-start" type="range" min="0" max="${max}" step="0.1" value="${clip.start}" data-clip-start-id="${escapeHtml(item.id)}" />
+            <input class="clip-range clip-range-end" type="range" min="0.1" max="${max}" step="0.1" value="${clip.end}" data-clip-end-id="${escapeHtml(item.id)}" />
+          </div>
+          <div class="clip-editor-foot">
+            <span class="clip-editor-tip">拖动两端进度条，决定 GIF 从哪开始、到哪结束</span>
+            <button class="mini-btn ghost" data-clip-reset-id="${escapeHtml(item.id)}" type="button">重置片段</button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+  elements.videoClipEditors.classList.remove("hidden");
+
+  const syncClipUI = (item) => {
+    const clip = normalizeVideoClip(item);
+    const selectorId = CSS.escape(item.id);
+    const startLabel = elements.videoClipEditors.querySelector(`[data-start-label="${selectorId}"]`);
+    const endLabel = elements.videoClipEditors.querySelector(`[data-end-label="${selectorId}"]`);
+    const lengthLabel = elements.videoClipEditors.querySelector(`[data-length-label="${selectorId}"]`);
+    const startInput = elements.videoClipEditors.querySelector(`[data-clip-start-id="${selectorId}"]`);
+    const endInput = elements.videoClipEditors.querySelector(`[data-clip-end-id="${selectorId}"]`);
+    const fill = elements.videoClipEditors.querySelector(`[data-clip-fill="${selectorId}"]`);
+    const max = clip.duration > 0 ? clip.duration : Math.max(6, clip.end);
+    if (startLabel) startLabel.textContent = `开始 ${formatSecondsLabel(clip.start)}`;
+    if (endLabel) endLabel.textContent = `结束 ${formatSecondsLabel(clip.end)}`;
+    if (lengthLabel) {
+      lengthLabel.textContent = `片段 ${formatSecondsLabel(Math.max(0.1, clip.end - clip.start))} / 全长 ${formatSecondsLabel(max)}`;
+    }
+    if (startInput) {
+      startInput.max = String(max);
+      startInput.value = String(clip.start);
+    }
+    if (endInput) {
+      endInput.max = String(max);
+      endInput.value = String(clip.end);
+    }
+    if (fill) {
+      const left = max > 0 ? (clip.start / max) * 100 : 0;
+      const width = max > 0 ? ((clip.end - clip.start) / max) * 100 : 100;
+      fill.style.left = `${left}%`;
+      fill.style.width = `${Math.max(0, width)}%`;
+    }
+  };
+
+  elements.videoClipEditors.querySelectorAll(".clip-editor-video").forEach((video) => {
+    video.addEventListener("loadedmetadata", () => {
+      const item = state.candidates.find((entry) => entry.id === video.dataset.clipVideoId);
+      if (!item) return;
+      if (Number.isFinite(video.duration) && video.duration > 0) {
+        item.videoDuration = video.duration;
+      }
+      syncClipUI(item);
+      try {
+        video.currentTime = getVideoPreviewTime(video.duration);
+      } catch {}
+    });
+    video.addEventListener("timeupdate", () => {
+      const item = state.candidates.find((entry) => entry.id === video.dataset.clipVideoId);
+      if (!item) return;
+      const clip = normalizeVideoClip(item);
+      if (!video.paused && video.currentTime >= clip.end - 0.02) {
+        video.pause();
+        try {
+          video.currentTime = clip.start;
+        } catch {}
+      }
+    });
+    video.addEventListener("error", () => {
+      if (!video.dataset.triedProxy && video.dataset.proxySrc && video.dataset.proxySrc !== video.dataset.directSrc) {
+        video.dataset.triedProxy = "1";
+        video.src = video.dataset.proxySrc;
+        video.load();
+      }
+    });
+  });
+
+  elements.videoClipEditors.querySelectorAll("[data-clip-start-id]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const item = state.candidates.find((entry) => entry.id === input.dataset.clipStartId);
+      if (!item) return;
+      item.clipStart = Number.parseFloat(input.value) || 0;
+      if (item.clipEnd <= item.clipStart + 0.1) item.clipEnd = item.clipStart + 0.1;
+      syncClipUI(item);
+      const selectorId = CSS.escape(item.id);
+      const video = elements.videoClipEditors.querySelector(`[data-clip-video-id="${selectorId}"]`);
+      if (video) {
+        try {
+          video.currentTime = item.clipStart;
+        } catch {}
+      }
+    });
+    input.addEventListener("change", () => {
+      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    });
+  });
+
+  elements.videoClipEditors.querySelectorAll("[data-clip-end-id]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const item = state.candidates.find((entry) => entry.id === input.dataset.clipEndId);
+      if (!item) return;
+      item.clipEnd = Number.parseFloat(input.value) || item.clipEnd;
+      if (item.clipEnd <= item.clipStart + 0.1) item.clipEnd = item.clipStart + 0.1;
+      syncClipUI(item);
+      const selectorId = CSS.escape(item.id);
+      const video = elements.videoClipEditors.querySelector(`[data-clip-video-id="${selectorId}"]`);
+      if (video && video.currentTime > item.clipEnd) {
+        try {
+          video.currentTime = item.clipEnd;
+        } catch {}
+      }
+    });
+    input.addEventListener("change", () => {
+      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    });
+  });
+
+  elements.videoClipEditors.querySelectorAll("[data-clip-preview-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const item = state.candidates.find((entry) => entry.id === button.dataset.clipPreviewId);
+      if (!item) return;
+      const selectorId = CSS.escape(item.id);
+      const video = elements.videoClipEditors.querySelector(`[data-clip-video-id="${selectorId}"]`);
+      if (!video) return;
+      const clip = normalizeVideoClip(item);
+      try {
+        video.pause();
+        video.currentTime = clip.start;
+        await video.play();
+      } catch {}
+    });
+  });
+
+  elements.videoClipEditors.querySelectorAll("[data-clip-reset-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = state.candidates.find((entry) => entry.id === button.dataset.clipResetId);
+      if (!item) return;
+      const duration = Number.isFinite(item.videoDuration) && item.videoDuration > 0 ? item.videoDuration : 0;
+      item.clipStart = 0;
+      item.clipEnd = duration > 0 ? Math.max(0.5, Math.min(duration, 3)) : 3;
+      syncClipUI(item);
+      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    });
+  });
+}
+
 async function renderGifPreview(groupKey = null) {
   const gifBlob = await generateGifBlob(groupKey, false);
   clearGifPreviewUrl();
@@ -990,6 +1275,7 @@ async function renderGifPreview(groupKey = null) {
 
 async function renderPreview() {
   const groups = getSelectedGroups();
+  renderVideoClipEditors();
   syncPreviewGroupSelection(groups);
   if (!groups.length) {
     elements.previewCanvas.style.display = "none";
@@ -997,6 +1283,8 @@ async function renderPreview() {
     elements.previewGif.classList.add("hidden");
     elements.previewGallery.innerHTML = "";
     elements.previewGallery.classList.add("hidden");
+    elements.videoClipEditors.innerHTML = "";
+    elements.videoClipEditors.classList.add("hidden");
     clearGifPreviewUrl();
     clearGroupPreviewUrls();
     closePreviewModal();
@@ -1210,6 +1498,8 @@ function addLocalFiles(fileList) {
       selectionKey: `local-upload::${objectUrl}`,
       mediaType,
       fileType: file.type,
+      clipStart: 0,
+      clipEnd: mediaType === "video" ? 3 : 0,
     });
     state.candidates.push(candidate);
     state.selectedCandidateKeys.add(candidate.selectionKey);
@@ -1218,6 +1508,7 @@ function addLocalFiles(fileList) {
   dedupeCandidates();
   renderCandidates();
   renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+  setStatus(`已添加 ${files.length} 个本地素材`);
 }
 
 async function extractImagesFromPage() {
@@ -1573,20 +1864,7 @@ function bindEvents() {
       20
     );
     elements.gifDurationInput.value = state.defaultGifDuration;
-  });
-
-  elements.gifVideoStartInput.addEventListener("change", () => {
-    state.videoClipStart = parsePositiveFloat(elements.gifVideoStartInput.value, state.videoClipStart, 0, 600);
-    elements.gifVideoStartInput.value = state.videoClipStart;
-    if (state.exportMode === "gif") {
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    }
-  });
-
-  elements.gifVideoClipInput.addEventListener("change", () => {
-    state.videoClipDuration = parsePositiveFloat(elements.gifVideoClipInput.value, state.videoClipDuration, 0.5, 60);
-    elements.gifVideoClipInput.value = state.videoClipDuration;
-    if (state.exportMode === "gif") {
+    if (state.exportMode === "gif" && getGifSelectionSummary().hasImage) {
       renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
     }
   });
@@ -1605,7 +1883,7 @@ function bindEvents() {
 
   elements.applyGifDurationBtn.addEventListener("click", () => {
     getSelectedImages().forEach((item) => {
-      item.duration = state.defaultGifDuration;
+      if (item.mediaType !== "video") item.duration = state.defaultGifDuration;
     });
     renderCandidates();
     setStatus("已把默认 GIF 速度应用到当前勾选图片");
