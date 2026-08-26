@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>网页拼图工具</title>
-    <link rel="stylesheet" href="./styles.css?v=20260826b" />
+    <link rel="stylesheet" href="./styles.css?v=20260826c" />
   </head>
   <body>
     <div class="page">
@@ -158,6 +158,13 @@
                 <input id="gifHeightInput" type="number" min="100" max="2400" step="10" value="960" />
               </label>
             </div>
+            <div class="control-group">
+              <label>导出格式</label>
+              <div class="segmented">
+                <button class="segment active" data-gif-output-format="gif" type="button">GIF</button>
+                <button class="segment" data-gif-output-format="mp4" type="button">MP4</button>
+              </div>
+            </div>
             <div id="gifImageSettings" class="gif-typed-settings hidden">
               <label class="field">
                 <span>默认每张速度(s)</span>
@@ -174,7 +181,7 @@
               <label for="gifBackgroundColor">GIF 背景色</label>
               <input id="gifBackgroundColor" type="color" value="#f5f7fb" />
             </div>
-            <div class="control-group gif-repeat-group">
+            <div id="gifRepeatGroup" class="control-group gif-repeat-group">
               <label>循环次数</label>
               <div class="segmented">
                 <button class="segment active" data-gif-repeat-mode="forever">无限循环</button>
@@ -198,6 +205,7 @@
           <div class="preview-wrap">
             <canvas id="previewCanvas"></canvas>
             <img id="previewGif" class="preview-gif hidden" alt="GIF 动态预览" />
+            <video id="previewVideo" class="preview-gif hidden" muted controls playsinline preload="metadata"></video>
             <div id="previewGallery" class="preview-gallery hidden"></div>
             <div id="emptyPreview" class="empty-preview">
               右侧会显示完整预览
@@ -219,10 +227,11 @@
         </div>
         <div class="preview-modal-body">
           <img id="modalPreviewImage" alt="高清预览图" />
+          <video id="modalPreviewVideo" class="hidden" controls playsinline preload="metadata"></video>
         </div>
       </div>
     </div>
 
-    <script type="module" src="./app.js?v=20260826b"></script>
+    <script type="module" src="./app.js?v=20260826c"></script>
   </body>
   </html>

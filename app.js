@@ -1,4 +1,4 @@
-import { GIFEncoder, quantize, applyPalette } from "./node_modules/gifenc/dist/gifenc.esm.js";
+import { GIFEncoder, quantize, applyPalette } from "./collage/vendor/gifenc.esm.js";
 
 const state = {
   layout: "horizontal",

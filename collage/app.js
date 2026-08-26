@@ -1,4 +1,5 @@
 import { GIFEncoder, quantize, applyPalette } from "./vendor/gifenc.esm.js";
+import { Muxer, ArrayBufferTarget } from "../node_modules/mp4-muxer/build/mp4-muxer.mjs";
 
 const state = {
   layout: "horizontal",
@@ -17,11 +18,13 @@ const state = {
   videoClipDuration: 3,
   gifRepeatMode: "forever",
   gifRepeatCount: 3,
+  gifOutputFormat: "gif",
   candidateFilter: "all",
   candidates: [],
   selectedCandidateKeys: new Set(),
   draggingId: null,
   gifPreviewUrl: null,
+  mp4PreviewUrl: null,
   modalPreviewUrl: null,
   modalGroupKey: null,
   groupPreviewUrls: [],
@@ -60,6 +63,7 @@ const elements = {
   gifWidthInput: document.getElementById("gifWidthInput"),
   gifHeightInput: document.getElementById("gifHeightInput"),
   gifDurationInput: document.getElementById("gifDurationInput"),
+  gifRepeatGroup: document.getElementById("gifRepeatGroup"),
   gifRepeatCountWrap: document.getElementById("gifRepeatCountWrap"),
   gifRepeatCountInput: document.getElementById("gifRepeatCountInput"),
   applyGifDurationBtn: document.getElementById("applyGifDurationBtn"),
@@ -68,18 +72,21 @@ const elements = {
   downloadAllBtn: document.getElementById("downloadAllBtn"),
   previewCanvas: document.getElementById("previewCanvas"),
   previewGif: document.getElementById("previewGif"),
+  previewVideo: document.getElementById("previewVideo"),
   previewGallery: document.getElementById("previewGallery"),
   videoClipEditors: document.getElementById("videoClipEditors"),
   emptyPreview: document.getElementById("emptyPreview"),
   previewWrap: document.querySelector(".preview-wrap"),
   previewModal: document.getElementById("previewModal"),
   modalPreviewImage: document.getElementById("modalPreviewImage"),
+  modalPreviewVideo: document.getElementById("modalPreviewVideo"),
   modalDownloadBtn: document.getElementById("modalDownloadBtn"),
   modalCloseBtn: document.getElementById("modalCloseBtn"),
   layoutButtons: document.querySelectorAll("[data-layout]"),
   exportModeButtons: document.querySelectorAll("[data-export-mode]"),
   pngScaleButtons: document.querySelectorAll("[data-png-scale]"),
   gifRepeatButtons: document.querySelectorAll("[data-gif-repeat-mode]"),
+  gifOutputFormatButtons: document.querySelectorAll("[data-gif-output-format]"),
   candidateFilterButtons: document.querySelectorAll("[data-candidate-filter]"),
 };
 
@@ -322,11 +329,14 @@ function updateExportModeButtons() {
   });
   elements.pngSettings.classList.toggle("hidden", state.exportMode !== "png");
   elements.gifSettings.classList.toggle("hidden", state.exportMode !== "gif");
-  elements.downloadBtn.textContent = state.exportMode === "gif" ? "下载勾选 GIF" : "下载勾选 PNG";
-  elements.downloadAllBtn.textContent = state.exportMode === "gif" ? "下载全部 GIF" : "下载全部 PNG";
+  const gifLabel = state.gifOutputFormat.toUpperCase();
+  elements.downloadBtn.textContent = state.exportMode === "gif" ? `下载勾选 ${gifLabel}` : "下载勾选 PNG";
+  elements.downloadAllBtn.textContent = state.exportMode === "gif" ? `下载全部 ${gifLabel}` : "下载全部 PNG";
   elements.emptyPreview.textContent =
     state.exportMode === "gif"
-      ? "这里会显示完整动图预览"
+      ? state.gifOutputFormat === "mp4"
+        ? "这里会显示完整 MP4 预览"
+        : "这里会显示完整动图预览"
       : "这里会显示完整预览";
   updateGifSettingPanels();
 }
@@ -343,6 +353,17 @@ function updateGifRepeatButtons() {
     button.classList.toggle("active", button.dataset.gifRepeatMode === state.gifRepeatMode);
   });
   elements.gifRepeatCountWrap.classList.toggle("hidden", state.gifRepeatMode !== "custom");
+}
+
+function updateGifOutputFormatButtons() {
+  elements.gifOutputFormatButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.gifOutputFormat === state.gifOutputFormat);
+  });
+  elements.gifRepeatGroup?.classList.toggle("hidden", state.gifOutputFormat !== "gif");
+  elements.gifRepeatCountWrap.classList.toggle(
+    "hidden",
+    state.gifOutputFormat !== "gif" || state.gifRepeatMode !== "custom"
+  );
 }
 
 function updateCandidateFilterButtons() {
@@ -527,9 +548,17 @@ function loadImageWithOptions(src, options = {}) {
 
 async function loadRenderableImage(item) {
   if (item.mediaType === "video") {
-    const video = await loadVideoElement(item.renderSrc || item.directSrc || item.previewSrc || item.src);
-    await seekVideo(video, 0);
-    return captureVideoFrame(video);
+    let lastError = null;
+    for (const src of getVideoSourceCandidates(item, "proxy")) {
+      try {
+        const video = await loadVideoElement(src);
+        await seekVideo(video, getVideoPreviewTime(video.duration));
+        return captureVideoFrame(video);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error("视频加载失败");
   }
   const sources = [
     item.renderSrc ? { src: item.renderSrc } : null,
@@ -604,6 +633,26 @@ function clearGifPreviewUrl() {
   }
 }
 
+function clearMp4PreviewUrl() {
+  if (state.mp4PreviewUrl) {
+    URL.revokeObjectURL(state.mp4PreviewUrl);
+    state.mp4PreviewUrl = null;
+  }
+}
+
+function clearMainMediaPreview() {
+  clearGifPreviewUrl();
+  clearMp4PreviewUrl();
+  elements.previewGif.removeAttribute("src");
+  elements.previewGif.style.display = "none";
+  elements.previewGif.classList.add("hidden");
+  elements.previewVideo.pause();
+  elements.previewVideo.removeAttribute("src");
+  elements.previewVideo.load();
+  elements.previewVideo.style.display = "none";
+  elements.previewVideo.classList.add("hidden");
+}
+
 function clearModalPreviewUrl() {
   if (state.modalPreviewUrl) {
     URL.revokeObjectURL(state.modalPreviewUrl);
@@ -618,6 +667,16 @@ function clearGroupPreviewUrls() {
     } catch {}
   });
   state.groupPreviewUrls = [];
+}
+
+function getVideoSourceCandidates(item, prefer = "proxy") {
+  const proxy = item.proxyUrl || item.renderSrc || item.src;
+  const direct = item.directSrc || item.previewSrc || item.src;
+  const ordered =
+    prefer === "direct"
+      ? [direct, proxy, item.previewSrc, item.src]
+      : [proxy, direct, item.previewSrc, item.src];
+  return Array.from(new Set(ordered.filter(Boolean)));
 }
 
 function bindPreviewRowDrag() {
@@ -666,6 +725,11 @@ function closePreviewModal() {
   elements.previewModal.classList.add("hidden");
   elements.previewModal.setAttribute("aria-hidden", "true");
   elements.modalPreviewImage.removeAttribute("src");
+  elements.modalPreviewImage.classList.add("hidden");
+  elements.modalPreviewVideo.pause();
+  elements.modalPreviewVideo.removeAttribute("src");
+  elements.modalPreviewVideo.load();
+  elements.modalPreviewVideo.classList.add("hidden");
   state.modalGroupKey = null;
   clearModalPreviewUrl();
 }
@@ -755,7 +819,7 @@ function renderCandidates() {
       const selected = state.selectedCandidateKeys.has(candidateKey);
       const direct = item.directSrc || item.previewSrc || item.src;
       const proxy = item.proxyUrl || item.renderSrc || direct;
-      const preferredVideoSrc = item.kind === "local" ? direct : proxy;
+      const preferredVideoSrc = direct;
       const thumbMarkup =
         item.mediaType === "video"
           ? `
@@ -1084,7 +1148,7 @@ function renderVideoClipEditors(groupKey = null) {
     .map((item, index) => {
       const direct = item.directSrc || item.previewSrc || item.src;
       const proxy = item.proxyUrl || item.renderSrc || direct;
-      const preferredVideoSrc = item.kind === "local" ? direct : proxy;
+      const preferredVideoSrc = direct;
       const clip = normalizeVideoClip(item);
       const max = clip.duration > 0 ? clip.duration : Math.max(6, clip.end);
       const clipLength = Math.max(0.1, clip.end - clip.start);
@@ -1264,7 +1328,7 @@ function renderVideoClipEditors(groupKey = null) {
 
 async function renderGifPreview(groupKey = null) {
   const gifBlob = await generateGifBlob(groupKey, false);
-  clearGifPreviewUrl();
+  clearMainMediaPreview();
   state.gifPreviewUrl = URL.createObjectURL(gifBlob);
   elements.previewGif.src = state.gifPreviewUrl;
   elements.previewGif.style.width = "";
@@ -1275,19 +1339,113 @@ async function renderGifPreview(groupKey = null) {
   setStatus(`已生成 1 张 GIF，包含 ${getSelectedImages(groupKey).length} 帧`);
 }
 
+async function getMp4EncoderConfig(width, height) {
+  if (typeof VideoEncoder === "undefined" || typeof VideoFrame === "undefined") {
+    throw new Error("当前浏览器不支持 MP4 导出");
+  }
+  const candidates = [
+    { codec: "avc1.42001f", avc: { format: "avc" } },
+    { codec: "avc1.42E01E", avc: { format: "avc" } },
+    { codec: "avc1.4d401f", avc: { format: "avc" } },
+  ];
+  for (const candidate of candidates) {
+    const config = {
+      ...candidate,
+      width,
+      height,
+      bitrate: Math.max(1_200_000, Math.round(width * height * 3.2)),
+      framerate: 30,
+    };
+    try {
+      const supported = await VideoEncoder.isConfigSupported(config);
+      if (supported?.supported) return config;
+    } catch {}
+  }
+  throw new Error("当前浏览器不支持 MP4 编码");
+}
+
+async function generateMp4Blob(groupKey = null, showProgress = true) {
+  const frames = await buildGifFrames(groupKey);
+  if (!frames.length) {
+    throw new Error("没有可导出的帧");
+  }
+  const width = state.gifWidth;
+  const height = state.gifHeight;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  const target = new ArrayBufferTarget();
+  const muxer = new Muxer({
+    target,
+    fastStart: "in-memory",
+    video: {
+      codec: "avc",
+      width,
+      height,
+    },
+  });
+  const encoderConfig = await getMp4EncoderConfig(width, height);
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: (error) => {
+      throw error;
+    },
+  });
+  encoder.configure(encoderConfig);
+
+  let timestamp = 0;
+  for (let index = 0; index < frames.length; index += 1) {
+    const frame = frames[index];
+    drawGifFrame(ctx, frame.img, width, height);
+    const duration = Math.max(0.08, Number(frame.item.duration) || 0.08);
+    const durationUs = Math.round(duration * 1_000_000);
+    const videoFrame = new VideoFrame(canvas, {
+      timestamp,
+      duration: durationUs,
+    });
+    encoder.encode(videoFrame, {
+      keyFrame: index === 0 || index % 24 === 0,
+    });
+    videoFrame.close();
+    timestamp += durationUs;
+    if (showProgress) {
+      setStatus(`正在生成 MP4… ${index + 1}/${frames.length}`);
+    }
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+
+  await encoder.flush();
+  encoder.close();
+  muxer.finalize();
+  return new Blob([target.buffer], { type: "video/mp4" });
+}
+
+async function renderMp4Preview(groupKey = null) {
+  const mp4Blob = await generateMp4Blob(groupKey, false);
+  clearMainMediaPreview();
+  state.mp4PreviewUrl = URL.createObjectURL(mp4Blob);
+  elements.previewVideo.src = state.mp4PreviewUrl;
+  elements.previewVideo.style.display = "block";
+  elements.previewVideo.classList.remove("hidden");
+  elements.previewCanvas.style.display = "none";
+  setStatus(`已生成 1 个 MP4，包含 ${getSelectedImages(groupKey).length} 帧`);
+}
+
 async function renderPreview() {
   const groups = getSelectedGroups();
   renderVideoClipEditors();
   syncPreviewGroupSelection(groups);
   if (!groups.length) {
     elements.previewCanvas.style.display = "none";
-    elements.previewGif.style.display = "none";
-    elements.previewGif.classList.add("hidden");
+    clearMainMediaPreview();
     elements.previewGallery.innerHTML = "";
     elements.previewGallery.classList.add("hidden");
     elements.videoClipEditors.innerHTML = "";
     elements.videoClipEditors.classList.add("hidden");
-    clearGifPreviewUrl();
     clearGroupPreviewUrls();
     closePreviewModal();
     elements.emptyPreview.style.display = "grid";
@@ -1300,11 +1458,13 @@ async function renderPreview() {
     elements.previewGallery.classList.add("hidden");
     clearGroupPreviewUrls();
     if (state.exportMode === "gif") {
-      await renderGifPreview(groups[0].key);
+      if (state.gifOutputFormat === "mp4") {
+        await renderMp4Preview(groups[0].key);
+      } else {
+        await renderGifPreview(groups[0].key);
+      }
     } else {
-      clearGifPreviewUrl();
-      elements.previewGif.style.display = "none";
-      elements.previewGif.classList.add("hidden");
+      clearMainMediaPreview();
       await renderPngPreview(groups[0].key);
       elements.previewCanvas.style.display = "block";
     }
@@ -1313,19 +1473,25 @@ async function renderPreview() {
   }
 
   elements.previewCanvas.style.display = "none";
-  elements.previewGif.style.display = "none";
-  elements.previewGif.classList.add("hidden");
-  clearGifPreviewUrl();
+  clearMainMediaPreview();
   clearGroupPreviewUrls();
 
   const cards = [];
   for (const group of groups) {
     const blob =
-      state.exportMode === "gif" ? await generateGifBlob(group.key, false) : await generatePngBlob(group.key);
+      state.exportMode === "gif"
+        ? state.gifOutputFormat === "mp4"
+          ? await generateMp4Blob(group.key, false)
+          : await generateGifBlob(group.key, false)
+        : await generatePngBlob(group.key);
     if (!blob) continue;
     const url = URL.createObjectURL(blob);
     state.groupPreviewUrls.push(url);
     const checked = state.selectedPreviewGroupKeys.has(group.key);
+    const mediaMarkup =
+      state.exportMode === "gif" && state.gifOutputFormat === "mp4"
+        ? `<video src="${escapeHtml(url)}" controls playsinline preload="metadata"></video>`
+        : `<img src="${escapeHtml(url)}" alt="${escapeHtml(group.label)} 预览" data-open-group="${escapeHtml(group.key)}" />`;
     cards.push(`
       <article class="preview-group-card" data-group-key="${escapeHtml(group.key)}">
         <div class="preview-group-head">
@@ -1340,7 +1506,7 @@ async function renderPreview() {
         </div>
         <div class="preview-group-media-scroll">
           <div class="preview-group-media">
-          <img src="${escapeHtml(url)}" alt="${escapeHtml(group.label)} 预览" data-open-group="${escapeHtml(group.key)}" />
+          ${mediaMarkup}
           </div>
         </div>
       </article>
@@ -1370,7 +1536,9 @@ async function renderPreview() {
   });
   bindPreviewRowDrag();
 
-  setStatus(`已生成 ${cards.length} 张${state.exportMode === "gif" ? " GIF" : "拼图"}，按链接分开展示`);
+  const label =
+    state.exportMode === "gif" ? (state.gifOutputFormat === "mp4" ? " MP4" : " GIF") : "拼图";
+  setStatus(`已生成 ${cards.length} 个${label}，按链接分开展示`);
   elements.emptyPreview.style.display = "none";
 }
 
@@ -1427,7 +1595,10 @@ async function openPreviewModal(groupKey = null) {
   clearModalPreviewUrl();
   let blob = null;
   if (state.exportMode === "gif") {
-    blob = await generateGifBlob(groupKey, false);
+    blob =
+      state.gifOutputFormat === "mp4"
+        ? await generateMp4Blob(groupKey, false)
+        : await generateGifBlob(groupKey, false);
   } else {
     blob = await generatePngBlob(groupKey);
   }
@@ -1439,7 +1610,17 @@ async function openPreviewModal(groupKey = null) {
 
   state.modalPreviewUrl = URL.createObjectURL(blob);
   state.modalGroupKey = groupKey;
-  elements.modalPreviewImage.src = state.modalPreviewUrl;
+  if (state.exportMode === "gif" && state.gifOutputFormat === "mp4") {
+    elements.modalPreviewImage.classList.add("hidden");
+    elements.modalPreviewVideo.src = state.modalPreviewUrl;
+    elements.modalPreviewVideo.classList.remove("hidden");
+  } else {
+    elements.modalPreviewVideo.pause();
+    elements.modalPreviewVideo.removeAttribute("src");
+    elements.modalPreviewVideo.classList.add("hidden");
+    elements.modalPreviewImage.src = state.modalPreviewUrl;
+    elements.modalPreviewImage.classList.remove("hidden");
+  }
   elements.previewModal.classList.remove("hidden");
   elements.previewModal.setAttribute("aria-hidden", "false");
 }
@@ -1453,11 +1634,22 @@ async function downloadCurrentOutput(groupKey = null, withStatus = true) {
 
   if (state.exportMode === "gif") {
     try {
-      const blob = await generateGifBlob(groupKey);
+      const blob =
+        state.gifOutputFormat === "mp4"
+          ? await generateMp4Blob(groupKey)
+          : await generateGifBlob(groupKey);
       downloadBlob(blob, buildDownloadFilename(groupKey));
-      if (withStatus) setStatus(`GIF 已开始下载，共 ${selectedImages.length} 帧`);
+      if (withStatus) {
+        setStatus(
+          state.gifOutputFormat === "mp4"
+            ? `MP4 已开始下载，共 ${selectedImages.length} 帧`
+            : `GIF 已开始下载，共 ${selectedImages.length} 帧`
+        );
+      }
     } catch (error) {
-      if (withStatus) setStatus(`GIF 生成失败：${error.message}`);
+      if (withStatus) {
+        setStatus(`${state.gifOutputFormat.toUpperCase()} 生成失败：${error.message}`);
+      }
     }
     return;
   }
@@ -1663,7 +1855,7 @@ function downloadBlob(blob, filename) {
 }
 
 function buildDownloadFilename(groupKey = null) {
-  const ext = state.exportMode === "gif" ? "gif" : "png";
+  const ext = state.exportMode === "gif" ? state.gifOutputFormat : "png";
   if (!groupKey) {
     return `collage-${state.layout}-${Date.now()}.${ext}`;
   }
@@ -1754,6 +1946,11 @@ function bindEvents() {
   });
   elements.previewGif.addEventListener("click", () => {
     if (state.exportMode === "gif") {
+      openPreviewModal().catch((error) => setStatus(`高清预览失败：${error.message}`));
+    }
+  });
+  elements.previewVideo.addEventListener("click", () => {
+    if (state.exportMode === "gif" && state.gifOutputFormat === "mp4") {
       openPreviewModal().catch((error) => setStatus(`高清预览失败：${error.message}`));
     }
   });
@@ -1883,6 +2080,15 @@ function bindEvents() {
     elements.gifRepeatCountInput.value = state.gifRepeatCount;
   });
 
+  elements.gifOutputFormatButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.gifOutputFormat = button.dataset.gifOutputFormat === "mp4" ? "mp4" : "gif";
+      updateGifOutputFormatButtons();
+      updateExportModeButtons();
+      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    });
+  });
+
   elements.applyGifDurationBtn.addEventListener("click", () => {
     getSelectedImages().forEach((item) => {
       if (item.mediaType !== "video") item.duration = state.defaultGifDuration;
@@ -1914,6 +2120,7 @@ function init() {
   updateExportModeButtons();
   updatePngScaleButtons();
   updateGifRepeatButtons();
+  updateGifOutputFormatButtons();
   updateCandidateFilterButtons();
   updateAssistButtons();
   elements.gifBackgroundColor.value = state.backgroundColor;
