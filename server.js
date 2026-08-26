@@ -366,6 +366,23 @@ function filterTikTokImages(items) {
     );
   });
 
+  const videoPrimary = cleaned.filter((item) => {
+    const source = String(item.source || "").toLowerCase();
+    const value = String(item.url || "").toLowerCase();
+    return (
+      item.mediaType === "video" ||
+      source.includes("video") ||
+      value.includes(".mp4") ||
+      value.includes(".webm") ||
+      value.includes("playaddr") ||
+      value.includes("downloadaddr")
+    );
+  });
+
+  if (videoPrimary.length) {
+    return toScoredImages(videoPrimary).slice(0, 8);
+  }
+
   const visiblePrimary = cleaned.filter((item) => {
     const source = String(item.source || "").toLowerCase();
     const value = String(item.url || "").toLowerCase();
@@ -453,8 +470,11 @@ function extractTikTokImagesFromScripts(html, pageUrl) {
   const urlListBlockRegex = /"urlList"\s*:\s*\[([\s\S]*?)\]/gi;
   const plainImageUrlRegex =
     /(https?:\\\/\\\/[^"'\\\s<>{}]+(?:jpe?g|png|webp|avif)[^"'\\\s<>{}]*)/gi;
+  const plainVideoUrlRegex =
+    /(https?:\\\/\\\/[^"'\\\s<>{}]+(?:mp4|webm|mov)[^"'\\\s<>{}]*)/gi;
   const tiktokCdnRegex =
     /(https?:\\\/\\\/[^"'\\\s<>{}]*(?:tiktokcdn|byteimg|muscdn|ibyteimg|ibytedtos)[^"'\\\s<>{}]*)/gi;
+  const playAddrRegex = /"(?:playAddr|downloadAddr|play_url|download_url)"\s*:\s*"([^"]+)"/gi;
 
   let match;
   while ((match = urlListBlockRegex.exec(html))) {
@@ -468,9 +488,20 @@ function extractTikTokImagesFromScripts(html, pageUrl) {
     const url = normalizeImageUrl(pageUrl, match[1]);
     if (url) results.push({ url, source: "script:image-url" });
   }
+  while ((match = plainVideoUrlRegex.exec(html))) {
+    const url = normalizeImageUrl(pageUrl, match[1]);
+    if (url) results.push({ url, source: "script:video-url", mediaType: "video" });
+  }
   while ((match = tiktokCdnRegex.exec(html))) {
     const url = normalizeImageUrl(pageUrl, match[1]);
-    if (url) results.push({ url, source: "script:tiktok-cdn" });
+    if (url) {
+      const mediaType = /\.(mp4|webm|mov)(\?|$)/i.test(url) ? "video" : "image";
+      results.push({ url, source: "script:tiktok-cdn", mediaType });
+    }
+  }
+  while ((match = playAddrRegex.exec(html))) {
+    const url = normalizeImageUrl(pageUrl, match[1]);
+    if (url) results.push({ url, source: "script:play-addr", mediaType: "video" });
   }
 
   return toScoredImages(results);
