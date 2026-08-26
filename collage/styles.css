@@ -714,6 +714,34 @@ button.ghost.danger,
   background: #fff8ef;
 }
 
+.candidate-video-shell {
+  position: relative;
+}
+
+.candidate-thumb-video {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: contain;
+  display: block;
+  background: #fff8ef;
+}
+
+.candidate-media-badge {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.78);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .card-body,
 .selected-body {
   padding: 10px 12px 12px;

@@ -318,6 +318,8 @@ function scoreImageUrl(url, source = "") {
   if (value.includes("photomode")) score += 8;
   if (value.includes("tplv-photomode-image")) score += 10;
   if (value.includes("image") || value.includes("photo")) score += 1;
+  if (/\.(mp4|webm|mov)(\?|$)/.test(value)) score += 6;
+  if (value.includes("video") || sourceValue.includes("video")) score += 4;
   if (sourceValue.includes("network")) score += 2;
   if (sourceValue.includes("script")) score += 2;
   if (sourceValue.includes("browser")) score += 1;
@@ -390,9 +392,12 @@ function extractImagesFromHtml(html, pageUrl) {
   const imgRegex = /<img[\s\S]*?(?:src|data-src|data-original|data-lazy-src|data-lazy)=["']([^"']+)["'][\s\S]*?>/gi;
   const sourceSrcsetRegex = /<(?:img|source)[\s\S]*?(?:srcset|data-srcset)=["']([^"']+)["'][\s\S]*?>/gi;
   const posterRegex = /<video[\s\S]*?poster=["']([^"']+)["'][\s\S]*?>/gi;
+  const videoRegex = /<video[\s\S]*?(?:src|data-src)=["']([^"']+)["'][\s\S]*?>/gi;
+  const sourceVideoRegex = /<source[\s\S]*?src=["']([^"']+\.(?:mp4|webm|mov)(?:\?[^"']*)?)["'][\s\S]*?>/gi;
   const dataImageRegex =
     /<(?:img|div|a)[\s\S]*?(?:data-image|data-cover|data-bg|data-background|data-thumb|data-src-large)=["']([^"']+)["'][\s\S]*?>/gi;
   const metaRegex = /<meta[\s\S]*?(?:property|name)=["'](?:og:image|twitter:image|twitter:image:src)["'][\s\S]*?content=["']([^"']+)["'][\s\S]*?>/gi;
+  const metaVideoRegex = /<meta[\s\S]*?(?:property|name)=["'](?:og:video|og:video:url|twitter:player:stream)["'][\s\S]*?content=["']([^"']+)["'][\s\S]*?>/gi;
   const linkRegex = /<link[\s\S]*?rel=["']image_src["'][\s\S]*?href=["']([^"']+)["'][\s\S]*?>/gi;
   const bgRegex = /background-image\s*:\s*url\(([^)]+)\)/gi;
 
@@ -409,7 +414,15 @@ function extractImagesFromHtml(html, pageUrl) {
   }
   while ((match = posterRegex.exec(html))) {
     const url = normalizeImageUrl(pageUrl, match[1]);
-    if (url) results.push({ url, source: "poster" });
+    if (url) results.push({ url, source: "poster", mediaType: "image" });
+  }
+  while ((match = videoRegex.exec(html))) {
+    const url = normalizeImageUrl(pageUrl, match[1]);
+    if (url) results.push({ url, source: "video", mediaType: "video" });
+  }
+  while ((match = sourceVideoRegex.exec(html))) {
+    const url = normalizeImageUrl(pageUrl, match[1]);
+    if (url) results.push({ url, source: "video-source", mediaType: "video" });
   }
   while ((match = dataImageRegex.exec(html))) {
     const url = normalizeImageUrl(pageUrl, match[1]);
@@ -418,6 +431,10 @@ function extractImagesFromHtml(html, pageUrl) {
   while ((match = metaRegex.exec(html))) {
     const url = normalizeImageUrl(pageUrl, match[1]);
     if (url) results.push({ url, source: "meta" });
+  }
+  while ((match = metaVideoRegex.exec(html))) {
+    const url = normalizeImageUrl(pageUrl, match[1]);
+    if (url) results.push({ url, source: "meta-video", mediaType: "video" });
   }
   while ((match = linkRegex.exec(html))) {
     const url = normalizeImageUrl(pageUrl, match[1]);
@@ -507,6 +524,9 @@ async function collectImagesFromExistingPage(page) {
     document.querySelectorAll("video[poster]").forEach((video) => {
       push(video.getAttribute("poster"), "browser-dom:poster");
     });
+    document.querySelectorAll("video").forEach((video) => {
+      push(video.currentSrc || video.src, "browser-dom:video");
+    });
 
     document.querySelectorAll("*").forEach((node) => {
       const rect = node.getBoundingClientRect();
@@ -534,6 +554,7 @@ async function collectImagesFromExistingPage(page) {
     .map((item) => ({
       url: normalizeImageUrl(page.url(), item.url),
       source: item.source,
+      mediaType: String(item.source || "").toLowerCase().includes("video") ? "video" : "image",
     }))
     .filter((item) => item.url);
 
@@ -601,9 +622,17 @@ async function extractImagesWithBrowser(targetUrl, options = {}) {
       const contentType = response.headers()["content-type"] || "";
       if (
         response.ok() &&
-        (contentType.includes("image/") || /\.(png|jpg|jpeg|webp|avif)(\?|$)/i.test(url))
+        (
+          contentType.includes("image/") ||
+          contentType.includes("video/") ||
+          /\.(png|jpg|jpeg|webp|avif|mp4|webm|mov)(\?|$)/i.test(url)
+        )
       ) {
-        networkImages.push({ url, source: "browser-network" });
+        networkImages.push({
+          url,
+          source: "browser-network",
+          mediaType: contentType.includes("video/") || /\.(mp4|webm|mov)(\?|$)/i.test(url) ? "video" : "image",
+        });
       }
     } catch {}
   });
@@ -656,6 +685,9 @@ async function extractImagesWithBrowser(targetUrl, options = {}) {
       document.querySelectorAll("video[poster]").forEach((video) => {
         push(video.getAttribute("poster"), "browser-dom:poster");
       });
+      document.querySelectorAll("video").forEach((video) => {
+        push(video.currentSrc || video.src, "browser-dom:video");
+      });
 
       document.querySelectorAll("*").forEach((node) => {
         const rect = node.getBoundingClientRect();
@@ -683,6 +715,7 @@ async function extractImagesWithBrowser(targetUrl, options = {}) {
       .map((item) => ({
         url: normalizeImageUrl(page.url(), item.url),
         source: item.source,
+        mediaType: String(item.source || "").toLowerCase().includes("video") ? "video" : "image",
       }))
       .filter((item) => item.url);
 
@@ -885,7 +918,7 @@ async function handleExtract(reqUrl, res) {
   sendJson(res, 200, payload);
 }
 
-async function handleProxyImage(reqUrl, res) {
+async function handleProxyMedia(reqUrl, res) {
   const target = reqUrl.searchParams.get("url");
   if (!target) {
     res.writeHead(400, {
@@ -927,7 +960,7 @@ async function handleProxyImage(reqUrl, res) {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        Accept: "*/*",
         Referer: referer,
         Origin: referer.replace(/\/$/, ""),
       },
@@ -939,7 +972,7 @@ async function handleProxyImage(reqUrl, res) {
         "Content-Type": "text/plain; charset=utf-8",
         "Access-Control-Allow-Origin": "*",
       });
-      res.end(`图片加载失败：${response.status}`);
+      res.end(`媒体加载失败：${response.status}`);
       return;
     }
 
@@ -1097,8 +1130,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (reqUrl.pathname === "/proxy-image") {
-    await handleProxyImage(reqUrl, res);
+  if (reqUrl.pathname === "/proxy-image" || reqUrl.pathname === "/proxy-media") {
+    await handleProxyMedia(reqUrl, res);
     return;
   }
 

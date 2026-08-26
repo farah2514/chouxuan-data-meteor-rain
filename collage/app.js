@@ -141,14 +141,15 @@ function mapImagesToCandidates(images, groupKey, groupLabel, sourceUrl, groupInd
       src: item.url,
       previewSrc: item.url,
       directSrc: item.url,
-      renderSrc: `/proxy-image?url=${encodeURIComponent(item.url)}`,
-      proxyUrl: `/proxy-image?url=${encodeURIComponent(item.url)}`,
+      renderSrc: `/proxy-media?url=${encodeURIComponent(item.url)}`,
+      proxyUrl: `/proxy-media?url=${encodeURIComponent(item.url)}`,
       originalUrl: item.url,
       dedupeKey: item.identity || item.dedupeKey || item.url,
       groupKey,
       groupLabel,
       sourceUrl,
       selectionKey: `${groupKey}::${item.identity || item.dedupeKey || item.url}`,
+      mediaType: item.mediaType || "image",
     })
   );
 }
@@ -193,6 +194,8 @@ function createCandidate(base) {
       base.selectionKey ||
       `${base.groupKey || "default"}::${base.dedupeKey || base.identity || base.originalUrl || base.src}`,
     duration: base.duration || state.defaultGifDuration,
+    mediaType: base.mediaType || "image",
+    fileType: base.fileType || "",
     broken: false,
   };
 }
@@ -364,6 +367,61 @@ function drawContainedImage(ctx, img, x, y, width, height) {
   drawDecorations(ctx, drawX, drawY, drawWidth, drawHeight);
 }
 
+function loadVideoElement(src) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.preload = "auto";
+    video.muted = true;
+    video.playsInline = true;
+    video.crossOrigin = "anonymous";
+    const cleanup = () => {
+      video.onloadeddata = null;
+      video.onerror = null;
+    };
+    video.onloadeddata = () => {
+      cleanup();
+      resolve(video);
+    };
+    video.onerror = () => {
+      cleanup();
+      reject(new Error("视频加载失败"));
+    };
+    video.src = src;
+    video.load();
+  });
+}
+
+function seekVideo(video, time) {
+  return new Promise((resolve, reject) => {
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    const safeTime = Math.max(0, Math.min(time, Math.max(0, duration - 0.04)));
+    const cleanup = () => {
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("error", onError);
+    };
+    const onSeeked = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error("视频定位失败"));
+    };
+    video.addEventListener("seeked", onSeeked, { once: true });
+    video.addEventListener("error", onError, { once: true });
+    video.currentTime = safeTime;
+  });
+}
+
+function captureVideoFrame(video) {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, video.videoWidth || 1);
+  canvas.height = Math.max(1, video.videoHeight || 1);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
 function loadImageWithOptions(src, options = {}) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -377,6 +435,11 @@ function loadImageWithOptions(src, options = {}) {
 }
 
 async function loadRenderableImage(item) {
+  if (item.mediaType === "video") {
+    const video = await loadVideoElement(item.renderSrc || item.directSrc || item.previewSrc || item.src);
+    await seekVideo(video, 0);
+    return captureVideoFrame(video);
+  }
   const sources = [
     item.renderSrc ? { src: item.renderSrc } : null,
     item.directSrc ? { src: item.directSrc, crossOrigin: "anonymous" } : null,
@@ -589,6 +652,35 @@ function renderCandidates() {
       const selected = state.selectedCandidateKeys.has(candidateKey);
       const direct = item.directSrc || item.previewSrc || item.src;
       const proxy = item.proxyUrl || item.renderSrc || direct;
+      const thumbMarkup =
+        item.mediaType === "video"
+          ? `
+          <div class="candidate-video-shell">
+            <video
+              class="candidate-thumb candidate-thumb-video"
+              src="${escapeHtml(direct)}"
+              data-direct-src="${escapeHtml(direct)}"
+              data-proxy-src="${escapeHtml(proxy)}"
+              data-candidate-id="${escapeHtml(item.id)}"
+              muted
+              playsinline
+              preload="metadata"
+            ></video>
+            <span class="candidate-media-badge">视频</span>
+          </div>
+          `
+          : `
+          <img
+            class="candidate-thumb"
+            src="${escapeHtml(direct)}"
+            data-direct-src="${escapeHtml(direct)}"
+            data-proxy-src="${escapeHtml(proxy)}"
+            data-candidate-id="${escapeHtml(item.id)}"
+            alt="候选图片 ${index + 1}"
+            loading="lazy"
+            referrerpolicy="no-referrer"
+          />
+          `;
       return `
         <article class="candidate-card ${selected ? "candidate-card-selected" : ""} ${item.broken ? "is-broken" : ""}" data-candidate-id="${escapeHtml(item.id)}">
           <div class="candidate-topline">
@@ -601,21 +693,12 @@ function renderCandidates() {
             </div>
           </div>
 
-          <img
-            class="candidate-thumb"
-            src="${escapeHtml(direct)}"
-            data-direct-src="${escapeHtml(direct)}"
-            data-proxy-src="${escapeHtml(proxy)}"
-            data-candidate-id="${escapeHtml(item.id)}"
-            alt="候选图片 ${index + 1}"
-            loading="lazy"
-            referrerpolicy="no-referrer"
-          />
+          ${thumbMarkup}
 
           <div class="card-body">
             <div class="selected-controls ${selected ? "" : "hidden"}">
               <label class="mini-field">
-                <span>时长</span>
+                <span>${item.mediaType === "video" ? "片段时长" : "时长"}</span>
                 <input class="mini-number" type="number" min="0.1" max="20" step="0.1" value="${item.duration}" data-duration-id="${escapeHtml(item.id)}" />
               </label>
               <div class="selected-actions">
@@ -706,7 +789,7 @@ function renderCandidates() {
     });
   });
 
-  elements.candidateGrid.querySelectorAll(".candidate-thumb").forEach((img) => {
+  elements.candidateGrid.querySelectorAll("img.candidate-thumb").forEach((img) => {
     img.addEventListener("error", () => {
       const current = state.candidates.find((item) => item.id === img.dataset.candidateId);
       if (!current) return;
@@ -715,6 +798,21 @@ function renderCandidates() {
         img.src = img.dataset.proxySrc;
         return;
       }
+      current.broken = true;
+      state.selectedCandidateKeys.delete(getCandidateKey(current));
+      renderCandidates();
+    });
+  });
+
+  elements.candidateGrid.querySelectorAll("video.candidate-thumb-video").forEach((video) => {
+    video.addEventListener("loadeddata", async () => {
+      try {
+        await seekVideo(video, 0);
+      } catch {}
+    });
+    video.addEventListener("error", () => {
+      const current = state.candidates.find((item) => item.id === video.dataset.candidateId);
+      if (!current) return;
       current.broken = true;
       state.selectedCandidateKeys.delete(getCandidateKey(current));
       renderCandidates();
@@ -812,6 +910,33 @@ function drawGifFrame(ctx, img, canvasWidth, canvasHeight) {
   const innerWidth = canvasWidth - state.padding * 2;
   const innerHeight = canvasHeight - state.padding * 2;
   drawContainedImage(ctx, img, state.padding, state.padding, innerWidth, innerHeight);
+}
+
+async function buildGifFrames(groupKey = null) {
+  const selected = getSelectedImages(groupKey);
+  const frames = [];
+  for (const item of selected) {
+    if (item.mediaType === "video") {
+      const video = await loadVideoElement(item.renderSrc || item.directSrc || item.previewSrc || item.src);
+      const videoDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
+      const clipDuration = Math.max(0.8, item.duration || state.defaultGifDuration);
+      const frameCount = Math.max(4, Math.min(18, Math.round(clipDuration * 4)));
+      for (let index = 0; index < frameCount; index += 1) {
+        const progress = frameCount === 1 ? 0 : index / (frameCount - 1);
+        await seekVideo(video, progress * videoDuration);
+        frames.push({
+          item: { ...item, duration: Math.max(0.08, clipDuration / frameCount) },
+          img: captureVideoFrame(video),
+        });
+      }
+      continue;
+    }
+    frames.push({
+      item,
+      img: await loadRenderableImage(item),
+    });
+  }
+  return frames;
 }
 
 async function renderGifPreview(groupKey = null) {
@@ -924,7 +1049,7 @@ async function renderPreview() {
 }
 
 async function generateGifBlob(groupKey = null, showProgress = true) {
-  const frames = await loadSelectedImages(groupKey);
+  const frames = await buildGifFrames(groupKey);
   const canvas = document.createElement("canvas");
   canvas.width = state.gifWidth;
   canvas.height = state.gifHeight;
@@ -1021,14 +1146,17 @@ async function downloadCurrentOutput(groupKey = null, withStatus = true) {
 }
 
 function addLocalFiles(fileList) {
-  const files = Array.from(fileList).filter((file) => file.type.startsWith("image/"));
+  const files = Array.from(fileList).filter(
+    (file) => file.type.startsWith("image/") || file.type.startsWith("video/")
+  );
   if (!files.length) {
-    setStatus("没有检测到可用图片文件");
+    setStatus("没有检测到可用图片或视频文件");
     return;
   }
 
   files.forEach((file) => {
     const objectUrl = URL.createObjectURL(file);
+    const mediaType = file.type.startsWith("video/") ? "video" : "image";
     const candidate = createCandidate({
       id: `local-${Date.now()}-${imageCounter++}`,
       kind: "local",
@@ -1044,6 +1172,8 @@ function addLocalFiles(fileList) {
       groupLabel: "本地上传",
       sourceUrl: "",
       selectionKey: `local-upload::${objectUrl}`,
+      mediaType,
+      fileType: file.type,
     });
     state.candidates.push(candidate);
     state.selectedCandidateKeys.add(candidate.selectionKey);

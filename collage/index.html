@@ -47,24 +47,24 @@
       <main class="layout">
         <section class="panel">
           <div class="panel-title">
-            <h2>导入图片</h2>
+            <h2>导入素材</h2>
             <span class="panel-chip">呱</span>
           </div>
 
           <div class="upload-box" id="dropZone">
-            <input id="fileInput" type="file" accept="image/*" multiple />
-            <p>上传图片</p>
-            <span>拖拽或点击选择</span>
+            <input id="fileInput" type="file" accept="image/*,video/mp4,video/webm,video/quicktime" multiple />
+            <p>上传图片或视频</p>
+            <span>拖拽或点击选择，视频也能转 GIF</span>
           </div>
 
           <div class="url-block">
-            <label for="pageUrl">链接提图</label>
+            <label for="pageUrl">链接提素材</label>
             <div class="url-row">
               <textarea
                 id="pageUrl"
                 placeholder="一行一个链接，或用逗号分隔多个链接"
               ></textarea>
-              <button id="extractBtn" class="primary">提取图片</button>
+              <button id="extractBtn" class="primary">提取素材</button>
             </div>
             <div class="assist-row">
               <button id="assistExtractBtn" class="ghost" type="button">辅助提图</button>
@@ -76,11 +76,11 @@
           <div class="status" id="statusText">上传图片或粘贴链接开始</div>
 
           <div class="section-head">
-            <h3>候选图片</h3>
+            <h3>候选素材</h3>
             <button id="clearBtn" class="ghost danger">清空</button>
           </div>
           <div id="candidateGrid" class="image-grid empty">
-            <p>图片会显示在这里</p>
+            <p>图片和视频会显示在这里</p>
           </div>
         </section>
 
