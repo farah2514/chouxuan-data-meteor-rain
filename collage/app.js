@@ -82,6 +82,7 @@ const elements = {
   renderBtn: document.getElementById("renderBtn"),
   downloadBtn: document.getElementById("downloadBtn"),
   downloadAllBtn: document.getElementById("downloadAllBtn"),
+  downloadVideoBtn: document.getElementById("downloadVideoBtn"),
   previewCanvas: document.getElementById("previewCanvas"),
   previewGif: document.getElementById("previewGif"),
   previewVideo: document.getElementById("previewVideo"),
@@ -462,6 +463,7 @@ function updateExportModeButtons() {
     state.exportMode === "gif"
       ? "这里会显示完整动图预览"
       : "这里会显示完整预览";
+  updateVideoDownloadButton();
 }
 
 function updateGifRepeatButtons() {
@@ -478,6 +480,16 @@ function updateGifMediaSettingsVisibility() {
   const hasVideo = selected.some((item) => item.mediaType === "video");
   elements.gifImageSettings?.classList.toggle("hidden", hasSelection && !hasImage);
   elements.gifVideoSettings?.classList.toggle("hidden", hasSelection && !hasVideo);
+  updateVideoDownloadButton();
+}
+
+function updateVideoDownloadButton() {
+  if (!elements.downloadVideoBtn) return;
+  const selectedVideos = getSelectedImages().filter((item) => item.mediaType === "video");
+  const visible = state.exportMode === "gif" && selectedVideos.length > 0;
+  elements.downloadVideoBtn.classList.toggle("hidden", !visible);
+  elements.downloadVideoBtn.textContent =
+    selectedVideos.length > 1 ? `保存勾选MP4（${selectedVideos.length}个）` : "保存勾选MP4";
 }
 
 function syncTrimLabels(start, end) {
@@ -1502,6 +1514,92 @@ async function downloadCurrentOutput(groupKey = null, withStatus = true) {
   if (withStatus) setStatus("PNG 已开始下载");
 }
 
+function getVideoDownloadExtension(item) {
+  const fileType = String(item?.fileType || "").toLowerCase();
+  if (fileType.includes("webm")) return "webm";
+  if (fileType.includes("quicktime") || fileType.includes("mov")) return "mov";
+  return "mp4";
+}
+
+function buildOriginalVideoFilename(item, index = 0) {
+  const baseName = String(item?.name || item?.groupLabel || `video-${index + 1}`)
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[^\w\u4e00-\u9fa5-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 32);
+  const ext = getVideoDownloadExtension(item);
+  return `${baseName || `video-${index + 1}`}.${ext}`;
+}
+
+async function getOriginalVideoBlob(item) {
+  if (!item || item.mediaType !== "video") {
+    throw new Error("没有可保存的视频");
+  }
+  if (item.kind === "local" && item.originalUrl) {
+    const localResponse = await fetch(item.originalUrl);
+    if (!localResponse.ok) throw new Error("本地视频读取失败");
+    return await localResponse.blob();
+  }
+  try {
+    await ensureLocalVideoUrl(item);
+  } catch {}
+  const downloadUrl = item.originalUrl || item.directSrc || item.previewSrc || item.src;
+  const sources = [
+    item.localVideoUrl,
+    downloadUrl ? `/download-media?url=${encodeURIComponent(downloadUrl)}` : "",
+    item.browserDirectVideoUrl,
+    item.directSrc,
+    item.renderSrc,
+    item.proxyUrl,
+  ].filter(Boolean);
+  let lastError = null;
+  for (const src of sources) {
+    try {
+      const response = await fetch(src);
+      if (!response.ok) throw new Error(`视频下载失败：${response.status}`);
+      const blob = await response.blob();
+      if (!(blob instanceof Blob) || !blob.size) throw new Error("视频文件为空");
+      return blob;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("视频下载失败");
+}
+
+async function downloadSelectedVideos(withStatus = true) {
+  const selectedVideos = getSelectedImages().filter((item) => item.mediaType === "video");
+  if (!selectedVideos.length) {
+    if (withStatus) setStatus("请先勾选视频素材");
+    return;
+  }
+  let successCount = 0;
+  let failedCount = 0;
+  for (let index = 0; index < selectedVideos.length; index += 1) {
+    const item = selectedVideos[index];
+    try {
+      if (withStatus) setStatus(`正在保存原始视频 ${index + 1}/${selectedVideos.length}…`);
+      const blob = await getOriginalVideoBlob(item);
+      downloadBlob(blob, buildOriginalVideoFilename(item, index));
+      successCount += 1;
+      await new Promise((resolve) => setTimeout(resolve, 180));
+    } catch {
+      failedCount += 1;
+    }
+  }
+  if (!withStatus) return;
+  if (successCount && !failedCount) {
+    setStatus(`已开始下载 ${successCount} 个原始视频`);
+    return;
+  }
+  if (successCount) {
+    setStatus(`已下载 ${successCount} 个原始视频，${failedCount} 个失败`);
+    return;
+  }
+  setStatus("原始视频保存失败");
+}
+
 function addLocalFiles(fileList) {
   const files = Array.from(fileList).filter(
     (file) => file.type.startsWith("image/") || file.type.startsWith("video/")
@@ -1787,6 +1885,9 @@ function bindEvents() {
       return;
     }
     downloadMultipleOutputs(getDownloadTargetGroups(false)).catch((error) => setStatus(`导出失败：${error.message}`));
+  });
+  elements.downloadVideoBtn?.addEventListener("click", () => {
+    downloadSelectedVideos(true).catch((error) => setStatus(`原始视频保存失败：${error.message}`));
   });
   elements.previewCanvas.addEventListener("click", () => {
     if (state.exportMode === "png") {
