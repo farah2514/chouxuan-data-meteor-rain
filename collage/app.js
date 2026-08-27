@@ -1262,12 +1262,18 @@ async function buildGifFrames(groupKey = null) {
             0.5,
             Math.min(state.videoClipDuration || 3, Math.max(0.5, videoDuration - clipStart))
           );
-          const frameCount = Math.max(4, Math.min(18, Math.round(clipDuration * 4)));
+          const requestedFps = clipDuration <= 3 ? 12 : clipDuration <= 6 ? 10 : 8;
+          const maxFrameCount = clipDuration <= 3 ? 48 : clipDuration <= 6 ? 60 : 72;
+          const frameCount = Math.max(8, Math.min(maxFrameCount, Math.round(clipDuration * requestedFps)));
+          const frameStep = clipDuration / frameCount;
           for (let index = 0; index < frameCount; index += 1) {
-            const progress = frameCount === 1 ? 0 : index / (frameCount - 1);
-            await seekVideo(video, clipStart + progress * clipDuration);
+            const frameTime = Math.min(
+              clipStart + clipDuration - 0.04,
+              clipStart + index * frameStep
+            );
+            await seekVideo(video, frameTime);
             frames.push({
-              item: { ...item, duration: Math.max(0.08, clipDuration / frameCount) },
+              item: { ...item, duration: Math.max(0.06, frameStep) },
               img: captureVideoFrame(video),
             });
           }
