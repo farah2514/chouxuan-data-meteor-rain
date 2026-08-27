@@ -146,7 +146,7 @@ function simplifyName(value) {
 }
 
 function getVideoSourceCandidates(item) {
-  return [...new Set([item.directSrc, item.previewSrc, item.renderSrc, item.src].filter(Boolean))];
+  return [...new Set([item.localVideoUrl, item.directSrc, item.previewSrc, item.renderSrc, item.proxyUrl, item.src].filter(Boolean))];
 }
 
 function parseUrlList(rawValue) {
@@ -227,8 +227,45 @@ function createCandidate(base) {
     mediaType: base.mediaType || "image",
     fileType: base.fileType || "",
     posterUrl: base.posterUrl || "",
+    localVideoUrl: base.localVideoUrl || "",
+    videoDownloadPromise: null,
     broken: false,
   };
+}
+
+async function ensureLocalVideoUrl(item) {
+  if (!item || item.mediaType !== "video") return "";
+  if (item.localVideoUrl) return item.localVideoUrl;
+  if (item.videoDownloadPromise) return item.videoDownloadPromise;
+
+  const sources = [...new Set([item.proxyUrl, item.renderSrc, item.directSrc, item.previewSrc, item.src].filter(Boolean))];
+  item.videoDownloadPromise = (async () => {
+    let lastError = null;
+    for (const src of sources) {
+      try {
+        const response = await fetch(src);
+        if (!response.ok) {
+          throw new Error(`视频下载失败：${response.status}`);
+        }
+        const blob = await response.blob();
+        if (!(blob instanceof Blob) || !blob.size) {
+          throw new Error("视频下载失败");
+        }
+        const objectUrl = URL.createObjectURL(blob);
+        item.localVideoUrl = objectUrl;
+        return objectUrl;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error("视频下载失败");
+  })();
+
+  try {
+    return await item.videoDownloadPromise;
+  } finally {
+    item.videoDownloadPromise = null;
+  }
 }
 
 function dedupeCandidates() {
@@ -347,8 +384,14 @@ async function updateVideoTrimUI() {
   }
 
   elements.videoTrimPanel.classList.remove("hidden");
-  const sources = getVideoSourceCandidates(videoItem);
-  const src = sources[0];
+  let src = "";
+  try {
+    src = await ensureLocalVideoUrl(videoItem);
+  } catch {}
+  if (!src) {
+    const sources = getVideoSourceCandidates(videoItem);
+    src = sources[0] || "";
+  }
   if (!src) {
     elements.videoTrimPanel.classList.add("hidden");
     return;
@@ -553,6 +596,9 @@ function loadImageWithOptions(src, options = {}) {
 async function loadRenderableImage(item) {
   if (item.mediaType === "video") {
     let lastError = null;
+    try {
+      await ensureLocalVideoUrl(item);
+    } catch {}
     for (const src of getVideoSourceCandidates(item)) {
       try {
         const video = await loadVideoElement(src);
@@ -1087,6 +1133,9 @@ async function buildGifFrames(groupKey = null) {
   for (const item of selected) {
     if (item.mediaType === "video") {
       let built = false;
+      try {
+        await ensureLocalVideoUrl(item);
+      } catch {}
       for (const src of getVideoSourceCandidates(item)) {
         try {
           const video = await loadVideoElement(src);
