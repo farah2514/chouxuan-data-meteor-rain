@@ -41,6 +41,7 @@ const elements = {
   pageUrl: document.getElementById("pageUrl"),
   itemIdInput: document.getElementById("itemIdInput"),
   itemIdBlock: document.getElementById("itemIdBlock"),
+  itemIdLabel: document.getElementById("itemIdLabel"),
   pageUrlLabel: document.getElementById("pageUrlLabel"),
   uploadBoxTitle: document.getElementById("uploadBoxTitle"),
   uploadBoxHint: document.getElementById("uploadBoxHint"),
@@ -278,9 +279,7 @@ function buildTikTokItemUrl(itemId) {
 
 function buildMergedUrlList() {
   const directUrls = parseUrlList(elements.pageUrl.value);
-  const itemUrls = state.importMode === "video"
-    ? parseItemIdList(elements.itemIdInput?.value).map((itemId) => buildTikTokItemUrl(itemId))
-    : [];
+  const itemUrls = parseItemIdList(elements.itemIdInput?.value).map((itemId) => buildTikTokItemUrl(itemId));
   return Array.from(new Set([...directUrls, ...itemUrls]));
 }
 
@@ -297,10 +296,10 @@ function updateImportModeUI() {
     ? "一行一个视频链接，或用逗号分隔多个链接"
     : "一行一个图文链接，或用逗号分隔多个链接";
   elements.extractBtn.textContent = isVideo ? "提取视频" : "提取图片";
-  elements.itemIdBlock.classList.toggle("hidden", !isVideo);
-  if (!isVideo && elements.itemIdInput) {
-    elements.itemIdInput.value = "";
-  }
+  elements.itemIdLabel.textContent = isVideo ? "视频 item ID 提素材" : "图文 item ID 提素材";
+  elements.itemIdInput.placeholder = isVideo
+    ? "一行一个 item ID，自动生成 TikTok 视频链接并按顺序提取"
+    : "一行一个 item ID，自动生成 TikTok 图文链接并按顺序提取";
   state.candidateFilter = isVideo ? "video" : "image";
   updateCandidateFilterButtons();
 }
@@ -1786,7 +1785,7 @@ async function extractImagesFromPage() {
   const urlList = buildMergedUrlList();
   const itemIdCount = parseItemIdList(elements.itemIdInput?.value).length;
   if (!urlList.length) {
-    setStatus(state.importMode === "video" ? "请先输入至少一个视频链接或 item ID" : "请先输入至少一个图文链接");
+    setStatus(state.importMode === "video" ? "请先输入至少一个视频链接或 item ID" : "请先输入至少一个图文链接或 item ID");
     return;
   }
 
@@ -1863,7 +1862,7 @@ async function extractImagesFromPage() {
 async function startAssistExtract() {
   const urlList = buildMergedUrlList();
   if (urlList.length !== 1) {
-    setStatus(state.importMode === "video" ? "视频链路辅助提取一次只支持 1 个链接或 1 个 item ID" : "图片链路辅助提取一次只支持 1 个图文链接");
+    setStatus(state.importMode === "video" ? "视频链路辅助提取一次只支持 1 个链接或 1 个 item ID" : "图片链路辅助提取一次只支持 1 个图文链接或 1 个 item ID");
     return;
   }
 
