@@ -185,7 +185,16 @@ function simplifyName(value) {
 
 function getVideoSourceCandidates(item) {
   if (item?.mediaType === "video") {
-    return [...new Set([item.localVideoUrl, item.browserDirectVideoUrl].filter(Boolean))];
+    const downloadUrl = item.originalUrl || item.directSrc || item.previewSrc || item.src || "";
+    return [...new Set([
+      item.localVideoUrl,
+      downloadUrl ? `/download-media?url=${encodeURIComponent(downloadUrl)}` : "",
+      downloadUrl ? `/proxy-media?url=${encodeURIComponent(downloadUrl)}` : "",
+      item.browserDirectVideoUrl,
+      item.directSrc,
+      item.previewSrc,
+      item.src,
+    ].filter(Boolean))];
   }
   return [...new Set([item.localVideoUrl, item.directSrc, item.previewSrc, item.renderSrc, item.proxyUrl, item.src].filter(Boolean))];
 }
@@ -562,7 +571,7 @@ async function updateVideoTrimUI() {
   elements.videoTrimPanel.classList.remove("hidden");
   let src = "";
   try {
-    src = await ensureLocalVideoUrl(videoItem);
+    src = await resolvePlayableVideoSource(videoItem);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "视频下载失败");
   }
@@ -708,9 +717,14 @@ function loadVideoElement(src) {
     video.muted = true;
     video.playsInline = true;
     video.crossOrigin = "anonymous";
+    let timeoutId = null;
     const cleanup = () => {
       video.onloadeddata = null;
       video.onerror = null;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
     };
     video.onloadeddata = () => {
       cleanup();
@@ -720,9 +734,33 @@ function loadVideoElement(src) {
       cleanup();
       reject(new Error("视频加载失败"));
     };
+    timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error("视频加载超时"));
+    }, 12000);
     video.src = src;
     video.load();
   });
+}
+
+async function resolvePlayableVideoSource(item) {
+  if (!item || item.mediaType !== "video") {
+    throw new Error("当前不是视频素材");
+  }
+  try {
+    await ensureLocalVideoUrl(item);
+  } catch {}
+
+  let lastError = null;
+  for (const src of getVideoSourceCandidates(item)) {
+    try {
+      await loadVideoElement(src);
+      return src;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("视频加载失败");
 }
 
 function seekVideo(video, time) {
