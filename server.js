@@ -426,6 +426,31 @@ function filterTikTokImages(items) {
     );
   });
 
+  const strongImagePrimary = cleaned.filter((item) => {
+    const source = String(item.source || "").toLowerCase();
+    const value = String(item.url || "").toLowerCase();
+    if (item.mediaType === "video") return false;
+    return (
+      source.includes("visible-large") ||
+      source.includes("script:image-url") ||
+      source.includes("browser-dom:poster") ||
+      value.includes("photomode") ||
+      value.includes("tplv-photomode-image") ||
+      value.includes("/image/") ||
+      value.includes("image") ||
+      value.includes("photo")
+    );
+  });
+
+  if (strongImagePrimary.length >= 2) {
+    return toScoredImages(strongImagePrimary)
+      .slice(0, 12)
+      .map((item) => ({
+        ...item,
+        postType: "image",
+      }));
+  }
+
   const videoPrimary = cleaned.filter((item) => {
     const source = String(item.source || "").toLowerCase();
     const value = String(item.url || "").toLowerCase();
@@ -468,7 +493,13 @@ function filterTikTokImages(items) {
   const visiblePrimary = cleaned.filter((item) => {
     const source = String(item.source || "").toLowerCase();
     const value = String(item.url || "").toLowerCase();
-    return source.includes("visible-large") || value.includes("photomode");
+    return (
+      item.mediaType !== "video" &&
+      (source.includes("visible-large") ||
+        value.includes("photomode") ||
+        value.includes("tplv-photomode-image") ||
+        value.includes("/image/"))
+    );
   });
 
   const preferred = visiblePrimary.length ? visiblePrimary : cleaned.filter((item) => item.mediaType !== "video");
