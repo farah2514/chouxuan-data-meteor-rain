@@ -147,7 +147,7 @@ function simplifyName(value) {
 
 function getVideoSourceCandidates(item) {
   if (item?.mediaType === "video") {
-    return item.localVideoUrl ? [item.localVideoUrl] : [];
+    return [...new Set([item.localVideoUrl, item.browserDirectVideoUrl].filter(Boolean))];
   }
   return [...new Set([item.localVideoUrl, item.directSrc, item.previewSrc, item.renderSrc, item.proxyUrl, item.src].filter(Boolean))];
 }
@@ -280,6 +280,7 @@ function createCandidate(base) {
     fileType: base.fileType || "",
     posterUrl: base.posterUrl || "",
     localVideoUrl: base.localVideoUrl || "",
+    browserDirectVideoUrl: base.browserDirectVideoUrl || "",
     videoDownloadPromise: null,
     broken: false,
   };
@@ -291,11 +292,7 @@ async function ensureLocalVideoUrl(item) {
   if (item.videoDownloadPromise) return item.videoDownloadPromise;
 
   const downloadUrl = item.originalUrl || item.directSrc || item.previewSrc || item.src;
-  const sources = [
-    downloadUrl ? `/download-media?url=${encodeURIComponent(downloadUrl)}` : "",
-    item.proxyUrl,
-    item.renderSrc,
-  ].filter(Boolean);
+  const sources = [downloadUrl ? `/download-media?url=${encodeURIComponent(downloadUrl)}` : ""].filter(Boolean);
   item.videoDownloadPromise = (async () => {
     let lastError = null;
     setStatus("正在下载视频，完成后再生成预览…");
@@ -316,6 +313,29 @@ async function ensureLocalVideoUrl(item) {
       } catch (error) {
         lastError = error;
       }
+    }
+    if (downloadUrl) {
+      try {
+        setStatus("服务器下载失败，正在尝试浏览器直连视频…");
+        const response = await fetch(downloadUrl);
+        if (!response.ok) {
+          throw new Error(`视频下载失败：${response.status}`);
+        }
+        const blob = await response.blob();
+        if (!(blob instanceof Blob) || !blob.size) {
+          throw new Error("视频下载失败");
+        }
+        const objectUrl = URL.createObjectURL(blob);
+        item.localVideoUrl = objectUrl;
+        item.browserDirectVideoUrl = downloadUrl;
+        setStatus("浏览器直连成功，正在生成预览…");
+        return objectUrl;
+      } catch (error) {
+        lastError = error;
+      }
+      item.browserDirectVideoUrl = downloadUrl;
+      setStatus("服务器下载失败，正在尝试直接预览视频…");
+      return downloadUrl;
     }
     throw lastError || new Error("视频下载失败");
   })();
