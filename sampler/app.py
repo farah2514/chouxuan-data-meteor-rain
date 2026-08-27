@@ -252,6 +252,65 @@ def normalize_export_row(row, headers):
     }
 
 
+def is_probable_url(value):
+    text = str(value or "").strip()
+    return bool(text and QUOTED_URL_RE.fullmatch(text))
+
+
+def collect_nested_strings(payload):
+    values = []
+    if isinstance(payload, dict):
+        for value in payload.values():
+            values.extend(collect_nested_strings(value))
+    elif isinstance(payload, list):
+        for item in payload:
+            values.extend(collect_nested_strings(item))
+    elif isinstance(payload, (str, int, float, bool)):
+        text = str(payload).strip()
+        if text:
+            values.append(text)
+    return values
+
+
+def normalize_loaded_cell_value(value):
+    if value is None:
+        return ""
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        if text.startswith("="):
+            normalized = extract_link_from_formula(text)
+            return str(normalized).strip()
+        return text
+
+    if isinstance(value, (int, float, bool)):
+        return str(value).strip()
+
+    if isinstance(value, (dict, list)):
+        direct_url = find_first_key(value, {"link", "url", "href", "default_url", "defaultUrl", "pc_url", "mobile_url"})
+        if direct_url:
+            text = str(direct_url).strip()
+            if text:
+                return text
+
+        direct_text = find_first_key(value, {"text", "display_text", "displayText", "name", "title", "label"})
+        if direct_text:
+            text = str(direct_text).strip()
+            if text and not text.startswith("[{"):
+                return text
+
+        nested_strings = collect_nested_strings(value)
+        for candidate in nested_strings:
+            if is_probable_url(candidate):
+                return candidate
+        if nested_strings:
+            return " ".join(part for part in nested_strings if part and not part.startswith("[{"))
+
+    return str(value).strip()
+
+
 def build_export_dataset(headers, active_rows, sampled_row_ids, mode, format_name):
     clean_headers = [header for header in headers if header and not str(header).startswith("__")]
     sampled_set = set(sampled_row_ids or [])
@@ -306,6 +365,17 @@ def build_xlsx_bytes(headers, rows, highlighted_positions):
         "font_color": "#1E3A8A",
         "border": 1,
     })
+    url_fmt = workbook.add_format({
+        "font_color": "#2563EB",
+        "underline": 1,
+        "border": 1,
+    })
+    highlight_url_fmt = workbook.add_format({
+        "bg_color": "#DBEAFE",
+        "font_color": "#2563EB",
+        "underline": 1,
+        "border": 1,
+    })
 
     for col_idx, header in enumerate(headers):
         worksheet.write(0, col_idx, header, header_fmt)
@@ -313,7 +383,11 @@ def build_xlsx_bytes(headers, rows, highlighted_positions):
         fmt = highlight_fmt if (row_idx - 1) in highlighted_positions else normal_fmt
         for col_idx, header in enumerate(headers):
             cell_value = row.get(header, "")
-            if isinstance(cell_value, str):
+            if isinstance(cell_value, str) and is_probable_url(cell_value):
+                href = cell_value if cell_value.lower().startswith(("http://", "https://")) else f"https://{cell_value}"
+                link_fmt = highlight_url_fmt if (row_idx - 1) in highlighted_positions else url_fmt
+                worksheet.write_url(row_idx, col_idx, href, link_fmt, string=cell_value)
+            elif isinstance(cell_value, str):
                 worksheet.write_string(row_idx, col_idx, cell_value, fmt)
             else:
                 worksheet.write(row_idx, col_idx, cell_value, fmt)
@@ -629,7 +703,7 @@ def feishu_range_text(sheet_id, range_text=""):
 def matrix_to_object_rows(values):
     if not values:
         return []
-    header = [str(cell or "").strip() for cell in values[0]]
+    header = [normalize_loaded_cell_value(cell) for cell in values[0]]
     normalized_rows = []
     for row in values[1:]:
         current = list(row or [])
@@ -638,7 +712,7 @@ def matrix_to_object_rows(values):
         if len(current) > len(header):
             current = current[: len(header)]
         normalized_row = {
-            header[idx] or f"column_{idx + 1}": str(current[idx] if idx < len(current) else "").strip()
+            header[idx] or f"column_{idx + 1}": normalize_loaded_cell_value(current[idx] if idx < len(current) else "")
             for idx in range(len(header))
         }
         if not any(str(value or "").strip() for value in normalized_row.values()):
@@ -651,7 +725,7 @@ def load_sheet_rows_via_feishu(spreadsheet_token, sheet_id, range_text="", acces
     full_range = feishu_range_text(sheet_id, range_text)
     data = feishu_api_request(
         "GET",
-        f"/open-apis/sheets/v2/spreadsheets/{quote(spreadsheet_token)}/values/{quote(full_range, safe='')}",
+        f"/open-apis/sheets/v2/spreadsheets/{quote(spreadsheet_token)}/values/{quote(full_range, safe='')}?valueRenderOption=FormattedValue&dateTimeRenderOption=FormattedString",
         access_token=access_token,
     )
     value_range = data.get("valueRange") or data.get("data") or {}
@@ -831,7 +905,7 @@ def normalize_sheet_rows(csv_text):
     rows = list(csv.reader(io.StringIO(csv_text or ""), skipinitialspace=True))
     if not rows:
         return []
-    header = [str(cell).strip() for cell in rows[0]]
+    header = [normalize_loaded_cell_value(cell) for cell in rows[0]]
     normalized_rows = []
     for row in rows[1:]:
         if len(row) < len(header):
@@ -839,7 +913,7 @@ def normalize_sheet_rows(csv_text):
         if len(row) > len(header):
             row = row[: len(header)]
         normalized_row = {
-            header[idx] or f"column_{idx + 1}": str(row[idx]).strip()
+            header[idx] or f"column_{idx + 1}": normalize_loaded_cell_value(row[idx])
             for idx in range(len(header))
         }
         if not any(str(value or "").strip() for value in normalized_row.values()):
