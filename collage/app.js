@@ -238,9 +238,15 @@ async function ensureLocalVideoUrl(item) {
   if (item.localVideoUrl) return item.localVideoUrl;
   if (item.videoDownloadPromise) return item.videoDownloadPromise;
 
-  const sources = [...new Set([item.proxyUrl, item.renderSrc, item.directSrc, item.previewSrc, item.src].filter(Boolean))];
+  const downloadUrl = item.originalUrl || item.directSrc || item.previewSrc || item.src;
+  const sources = [
+    downloadUrl ? `/download-media?url=${encodeURIComponent(downloadUrl)}` : "",
+    item.proxyUrl,
+    item.renderSrc,
+  ].filter(Boolean);
   item.videoDownloadPromise = (async () => {
     let lastError = null;
+    setStatus("正在下载视频，完成后再生成预览…");
     for (const src of sources) {
       try {
         const response = await fetch(src);
@@ -253,6 +259,7 @@ async function ensureLocalVideoUrl(item) {
         }
         const objectUrl = URL.createObjectURL(blob);
         item.localVideoUrl = objectUrl;
+        setStatus("视频下载完成，正在生成预览…");
         return objectUrl;
       } catch (error) {
         lastError = error;

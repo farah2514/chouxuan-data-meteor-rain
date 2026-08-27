@@ -25,8 +25,10 @@ const MIME_TYPES = {
 
 let playwrightPromise = null;
 const extractCache = new Map();
+const mediaDownloadCache = new Map();
 const assistSessions = new Map();
 const EXTRACT_CACHE_TTL_MS = 5 * 60 * 1000;
+const MEDIA_CACHE_TTL_MS = 30 * 60 * 1000;
 let samplerProcess = null;
 let samplerReadyPromise = null;
 
@@ -49,6 +51,23 @@ function sendFile(res, filePath) {
     }
     res.writeHead(200, { "Content-Type": contentType });
     res.end(data);
+  });
+}
+
+function getCachedMedia(cacheKey) {
+  const cached = mediaDownloadCache.get(cacheKey);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    mediaDownloadCache.delete(cacheKey);
+    return null;
+  }
+  return cached;
+}
+
+function setCachedMedia(cacheKey, payload) {
+  mediaDownloadCache.set(cacheKey, {
+    ...payload,
+    expiresAt: Date.now() + MEDIA_CACHE_TTL_MS,
   });
 }
 
@@ -1077,6 +1096,95 @@ async function handleProxyMedia(reqUrl, res) {
   }
 }
 
+async function handleDownloadMedia(reqUrl, res) {
+  const target = reqUrl.searchParams.get("url");
+  if (!target) {
+    res.writeHead(400, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end("缺少 url 参数");
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(target);
+  } catch {
+    res.writeHead(400, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end("链接格式不正确");
+    return;
+  }
+
+  if (!/^https?:$/.test(parsed.protocol)) {
+    res.writeHead(400, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end("仅支持 http 或 https 链接");
+    return;
+  }
+
+  const cached = getCachedMedia(parsed.toString());
+  if (cached) {
+    res.writeHead(200, {
+      "Content-Type": cached.contentType,
+      "Content-Length": String(cached.buffer.length),
+      "Cache-Control": "public, max-age=1800",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end(cached.buffer);
+    return;
+  }
+
+  const referer = isTikTokHost(parsed.hostname) ||
+    /(tiktokcdn|byteimg|muscdn|ibytedtos|ibyteimg)/i.test(parsed.hostname)
+    ? "https://www.tiktok.com/"
+    : `${parsed.protocol}//${parsed.host}/`;
+
+  try {
+    const response = await fetch(parsed.toString(), {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        Accept: "*/*",
+        Referer: referer,
+        Origin: referer.replace(/\/$/, ""),
+      },
+      redirect: "follow",
+    });
+
+    if (!response.ok) {
+      res.writeHead(502, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Access-Control-Allow-Origin": "*",
+      });
+      res.end(`视频下载失败：${response.status}`);
+      return;
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    setCachedMedia(parsed.toString(), { buffer, contentType });
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Content-Length": String(buffer.length),
+      "Cache-Control": "public, max-age=1800",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end(buffer);
+  } catch (error) {
+    res.writeHead(500, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end(error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function closeAssistSession(sessionId) {
   const session = assistSessions.get(sessionId);
   if (!session) return;
@@ -1216,6 +1324,11 @@ const server = http.createServer(async (req, res) => {
 
   if (reqUrl.pathname === "/proxy-image" || reqUrl.pathname === "/proxy-media") {
     await handleProxyMedia(reqUrl, res);
+    return;
+  }
+
+  if (reqUrl.pathname === "/download-media") {
+    await handleDownloadMedia(reqUrl, res);
     return;
   }
 
