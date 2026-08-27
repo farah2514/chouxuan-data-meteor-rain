@@ -1612,7 +1612,7 @@
       selectEl.disabled = false;
     }
 
-    function renderChipPicker(container, items, selectedValues, placeholder, onToggle) {
+    function renderChipPicker(container, items, selectedValues, placeholder, onToggle, options = {}) {
       const selected = new Set(selectedValues || []);
       container.innerHTML = "";
       container.classList.remove("empty", "is-disabled");
@@ -1621,6 +1621,21 @@
         container.classList.add("empty", "is-disabled");
         container.textContent = placeholder || "暂无可选项";
         return;
+      }
+
+      if (options.showSelectAll) {
+        const selectAllButton = document.createElement("button");
+        selectAllButton.type = "button";
+        selectAllButton.className = "chip-option";
+        const allSelected = items.length > 0 && items.every((item) => selected.has(item.value));
+        selectAllButton.textContent = "全选";
+        selectAllButton.classList.toggle("active", allSelected);
+        selectAllButton.addEventListener("click", () => {
+          if (typeof options.onToggleAll === "function") {
+            options.onToggleAll(items.map((item) => item.value), allSelected);
+          }
+        });
+        container.appendChild(selectAllButton);
       }
 
       items.forEach((item) => {
@@ -1671,13 +1686,42 @@
       renderSidebarPlan();
     }
 
+    function handleBalanceFieldToggleAll(values, allSelected) {
+      state.balanceFields = allSelected ? [] : [...values];
+      const activeFieldSet = new Set(state.balanceFields || []);
+      state.balanceValues = (state.balanceValues || []).filter((token) => {
+        const [field] = String(token).split("::");
+        return activeFieldSet.has(field);
+      });
+      state.sampledRows = [];
+      state.previewPage = 1;
+      els.exportSampleBtn.disabled = true;
+      renderBalanceFieldPicker();
+      updateBalanceValueOptions();
+      refreshStats();
+      renderDataPreview();
+      renderSidebarPlan();
+    }
+
+    function handleBalanceValueToggleAll(values, allSelected) {
+      state.balanceValues = allSelected ? [] : [...values];
+      state.sampledRows = [];
+      state.previewPage = 1;
+      els.exportSampleBtn.disabled = true;
+      updateBalanceValueOptions();
+      refreshStats();
+      renderDataPreview();
+      renderSidebarPlan();
+    }
+
     function renderBalanceFieldPicker() {
       renderChipPicker(
         els.balanceField,
         state.headers.map((value) => ({ value, label: value })),
         state.balanceFields,
         "请先读取数据",
-        handleBalanceFieldToggle
+        handleBalanceFieldToggle,
+        { showSelectAll: true, onToggleAll: handleBalanceFieldToggleAll }
       );
     }
 
@@ -1806,7 +1850,7 @@
     function updateBalanceValueOptions() {
       const selectedFields = state.balanceFields || [];
       if (!selectedFields.length) {
-        renderChipPicker(els.balanceValues, [], [], "请先选择均衡字段", () => {});
+        renderChipPicker(els.balanceValues, [], [], "请先选择均衡字段", () => {}, { showSelectAll: false });
         return;
       }
 
@@ -1821,11 +1865,18 @@
       });
 
       if (!options.length) {
-        renderChipPicker(els.balanceValues, [], [], "当前字段没有可选值", () => {});
+        renderChipPicker(els.balanceValues, [], [], "当前字段没有可选值", () => {}, { showSelectAll: false });
         return;
       }
 
-      renderChipPicker(els.balanceValues, options, state.balanceValues || [], "请先选择均衡字段", handleBalanceValueToggle);
+      renderChipPicker(
+        els.balanceValues,
+        options,
+        state.balanceValues || [],
+        "请先选择均衡字段",
+        handleBalanceValueToggle,
+        { showSelectAll: true, onToggleAll: handleBalanceValueToggleAll }
+      );
     }
 
     function getFieldDistinctValues(field) {
