@@ -193,6 +193,55 @@ async function requestExtract(url) {
   return { response, data };
 }
 
+async function requestTikTokVideoFallback(url) {
+  const response = await fetch("https://mintapi.dev/api/tools/tiktok-video-downloader", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ url }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error || `TikTok 视频兜底失败：${response.status}`);
+  }
+
+  const videoUrl =
+    data?.links?.noWatermark ||
+    data?.links?.hd ||
+    data?.links?.watermark ||
+    data?.raw?.data?.play ||
+    data?.raw?.data?.hdplay ||
+    data?.raw?.data?.wmplay ||
+    "";
+  const posterUrl =
+    data?.cover ||
+    data?.raw?.data?.cover ||
+    data?.raw?.data?.origin_cover ||
+    data?.raw?.data?.ai_dynamic_cover ||
+    "";
+  if (!videoUrl) {
+    throw new Error("TikTok 视频兜底未返回可用地址");
+  }
+
+  return {
+    pageUrl: url,
+    count: 1,
+    postType: "video",
+    images: [
+      {
+        url: videoUrl,
+        source: "fallback:mintapi-browser",
+        mediaType: "video",
+        posterUrl,
+        identity: videoUrl,
+      },
+    ],
+    methodsUsed: ["mintapi-browser-fallback"],
+  };
+}
+
 function getExtractErrorMessage(value, data, fallbackMessage) {
   const base = data?.error || fallbackMessage || "提取失败";
   const hint = data?.hint ? ` ${data.hint}` : "";
@@ -1454,6 +1503,20 @@ async function extractImagesFromPage() {
         setStatus(`第 ${index + 1} 个链接第一次失败，正在自动重试…`);
         await new Promise((resolve) => setTimeout(resolve, 900));
         ({ response, data } = await requestExtract(value));
+      }
+
+      const isTikTokVideoUrl = /tiktok\.com/i.test(value) && /\/video\//i.test(value);
+      if (!response.ok && isTikTokVideoUrl) {
+        try {
+          setStatus(`第 ${index + 1} 个链接服务端提取失败，正在尝试短视频兜底…`);
+          data = await requestTikTokVideoFallback(value);
+          response = { ok: true };
+        } catch (fallbackError) {
+          failures.push(
+            `${getExtractErrorMessage(value, data, "提取失败")}。浏览器短视频兜底也失败：${fallbackError.message}`
+          );
+          continue;
+        }
       }
 
       if (!response.ok) {
