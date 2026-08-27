@@ -1,5 +1,7 @@
-import { GIFEncoder, quantize, applyPalette } from "./vendor/gifenc.esm.js";
-import { Muxer, ArrayBufferTarget } from "../node_modules/mp4-muxer/build/mp4-muxer.mjs";
+import { GIFEncoder, quantize, applyPalette } from "../node_modules/gifenc/dist/gifenc.esm.js";
+
+const pageParams = new URLSearchParams(window.location.search);
+const pageMode = pageParams.get("mode") === "gif" ? "gif" : "png";
 
 const state = {
   layout: "horizontal",
@@ -18,22 +20,18 @@ const state = {
   videoClipDuration: 3,
   gifRepeatMode: "forever",
   gifRepeatCount: 3,
-  gifOutputFormat: "gif",
   candidateFilter: "all",
   candidates: [],
   selectedCandidateKeys: new Set(),
   draggingId: null,
   gifPreviewUrl: null,
-  mp4PreviewUrl: null,
   modalPreviewUrl: null,
   modalGroupKey: null,
   groupPreviewUrls: [],
   assistSessionId: null,
   selectedPreviewGroupKeys: new Set(),
+  gifPreviewTimer: null,
 };
-
-const pageParams = new URLSearchParams(window.location.search);
-const pageMode = pageParams.get("mode") === "gif" ? "gif" : "png";
 
 const elements = {
   fileInput: document.getElementById("fileInput"),
@@ -57,13 +55,21 @@ const elements = {
   shadowToggle: document.getElementById("shadowToggle"),
   outlineToggle: document.getElementById("outlineToggle"),
   gifSettings: document.getElementById("gifSettings"),
-  gifImageSettings: document.getElementById("gifImageSettings"),
-  gifVideoSettings: document.getElementById("gifVideoSettings"),
   gifBackgroundColor: document.getElementById("gifBackgroundColor"),
   gifWidthInput: document.getElementById("gifWidthInput"),
   gifHeightInput: document.getElementById("gifHeightInput"),
+  gifImageSettings: document.getElementById("gifImageSettings"),
+  gifVideoSettings: document.getElementById("gifVideoSettings"),
+  videoTrimPanel: document.getElementById("videoTrimPanel"),
+  trimPreviewVideo: document.getElementById("trimPreviewVideo"),
+  trimStartRange: document.getElementById("trimStartRange"),
+  trimEndRange: document.getElementById("trimEndRange"),
+  trimStartLabel: document.getElementById("trimStartLabel"),
+  trimDurationLabel: document.getElementById("trimDurationLabel"),
+  trimEndLabel: document.getElementById("trimEndLabel"),
   gifDurationInput: document.getElementById("gifDurationInput"),
-  gifRepeatGroup: document.getElementById("gifRepeatGroup"),
+  gifVideoStartInput: document.getElementById("gifVideoStartInput"),
+  gifVideoClipInput: document.getElementById("gifVideoClipInput"),
   gifRepeatCountWrap: document.getElementById("gifRepeatCountWrap"),
   gifRepeatCountInput: document.getElementById("gifRepeatCountInput"),
   applyGifDurationBtn: document.getElementById("applyGifDurationBtn"),
@@ -74,19 +80,16 @@ const elements = {
   previewGif: document.getElementById("previewGif"),
   previewVideo: document.getElementById("previewVideo"),
   previewGallery: document.getElementById("previewGallery"),
-  videoClipEditors: document.getElementById("videoClipEditors"),
   emptyPreview: document.getElementById("emptyPreview"),
   previewWrap: document.querySelector(".preview-wrap"),
   previewModal: document.getElementById("previewModal"),
   modalPreviewImage: document.getElementById("modalPreviewImage"),
-  modalPreviewVideo: document.getElementById("modalPreviewVideo"),
   modalDownloadBtn: document.getElementById("modalDownloadBtn"),
   modalCloseBtn: document.getElementById("modalCloseBtn"),
   layoutButtons: document.querySelectorAll("[data-layout]"),
   exportModeButtons: document.querySelectorAll("[data-export-mode]"),
   pngScaleButtons: document.querySelectorAll("[data-png-scale]"),
   gifRepeatButtons: document.querySelectorAll("[data-gif-repeat-mode]"),
-  gifOutputFormatButtons: document.querySelectorAll("[data-gif-output-format]"),
   candidateFilterButtons: document.querySelectorAll("[data-candidate-filter]"),
 };
 
@@ -118,6 +121,11 @@ function parsePositiveFloat(value, fallback, min, max) {
   return clamp(parsed, min, max);
 }
 
+function formatTimeLabel(seconds) {
+  const safe = Math.max(0, Number(seconds) || 0);
+  return `${safe.toFixed(1)}s`;
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -137,14 +145,8 @@ function simplifyName(value) {
   }
 }
 
-function formatSecondsLabel(value) {
-  const safeValue = Math.max(0, Number(value) || 0);
-  return `${safeValue.toFixed(1)}s`;
-}
-
-function getVideoPreviewTime(duration) {
-  if (!Number.isFinite(duration) || duration <= 0.08) return 0;
-  return Math.min(0.08, Math.max(0, duration - 0.04));
+function getVideoSourceCandidates(item) {
+  return [...new Set([item.directSrc, item.previewSrc, item.renderSrc, item.src].filter(Boolean))];
 }
 
 function parseUrlList(rawValue) {
@@ -177,6 +179,7 @@ function mapImagesToCandidates(images, groupKey, groupLabel, sourceUrl, groupInd
       sourceUrl,
       selectionKey: `${groupKey}::${item.identity || item.dedupeKey || item.url}`,
       mediaType: item.mediaType || "image",
+      posterUrl: item.posterUrl || "",
     })
   );
 }
@@ -223,35 +226,9 @@ function createCandidate(base) {
     duration: base.duration || state.defaultGifDuration,
     mediaType: base.mediaType || "image",
     fileType: base.fileType || "",
-    videoDuration: base.videoDuration || 0,
-    clipStart: base.clipStart ?? 0,
-    clipEnd: base.clipEnd ?? 0,
+    posterUrl: base.posterUrl || "",
     broken: false,
   };
-}
-
-function getGifSelectionSummary(groupKey = null) {
-  const items = getSelectedImages(groupKey);
-  const images = items.filter((item) => item.mediaType !== "video");
-  const videos = items.filter((item) => item.mediaType === "video");
-  return {
-    items,
-    images,
-    videos,
-    hasImage: images.length > 0,
-    hasVideo: videos.length > 0,
-  };
-}
-
-function normalizeVideoClip(item) {
-  const duration = item.videoDuration && Number.isFinite(item.videoDuration) ? item.videoDuration : 0;
-  const fallbackEnd = item.clipEnd || (item.clipStart || 0) + (state.videoClipDuration || 3);
-  const maxEnd = duration > 0 ? duration : Math.max(6, fallbackEnd);
-  const start = clamp(item.clipStart || 0, 0, Math.max(0, maxEnd - 0.1));
-  const end = clamp(fallbackEnd, start + 0.1, maxEnd);
-  item.clipStart = start;
-  item.clipEnd = end;
-  return { start, end, duration };
 }
 
 function dedupeCandidates() {
@@ -270,7 +247,6 @@ function getSelectedImages(groupKey = null) {
     (item) =>
       state.selectedCandidateKeys.has(getCandidateKey(item)) &&
       !item.broken &&
-      (pageMode === "gif" ? true : item.mediaType !== "video") &&
       (groupKey ? item.groupKey === groupKey : true)
   );
 }
@@ -325,27 +301,15 @@ function updatePngScaleButtons() {
 function updateExportModeButtons() {
   elements.exportModeButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.exportMode === state.exportMode);
-    button.disabled = pageMode === "png" || pageMode === "gif";
   });
   elements.pngSettings.classList.toggle("hidden", state.exportMode !== "png");
   elements.gifSettings.classList.toggle("hidden", state.exportMode !== "gif");
-  const gifLabel = state.gifOutputFormat.toUpperCase();
-  elements.downloadBtn.textContent = state.exportMode === "gif" ? `下载勾选 ${gifLabel}` : "下载勾选 PNG";
-  elements.downloadAllBtn.textContent = state.exportMode === "gif" ? `下载全部 ${gifLabel}` : "下载全部 PNG";
+  elements.downloadBtn.textContent = state.exportMode === "gif" ? "下载勾选 GIF" : "下载勾选 PNG";
+  elements.downloadAllBtn.textContent = state.exportMode === "gif" ? "下载全部 GIF" : "下载全部 PNG";
   elements.emptyPreview.textContent =
     state.exportMode === "gif"
-      ? state.gifOutputFormat === "mp4"
-        ? "这里会显示完整 MP4 预览"
-        : "这里会显示完整动图预览"
+      ? "这里会显示完整动图预览"
       : "这里会显示完整预览";
-  updateGifSettingPanels();
-}
-
-function updateGifSettingPanels() {
-  if (!elements.gifSettings) return;
-  const summary = getGifSelectionSummary();
-  elements.gifImageSettings?.classList.toggle("hidden", !(state.exportMode === "gif" && summary.hasImage));
-  elements.gifVideoSettings?.classList.toggle("hidden", !(state.exportMode === "gif" && summary.hasVideo));
 }
 
 function updateGifRepeatButtons() {
@@ -355,15 +319,83 @@ function updateGifRepeatButtons() {
   elements.gifRepeatCountWrap.classList.toggle("hidden", state.gifRepeatMode !== "custom");
 }
 
-function updateGifOutputFormatButtons() {
-  elements.gifOutputFormatButtons.forEach((button) => {
-    button.classList.toggle("active", button.dataset.gifOutputFormat === state.gifOutputFormat);
-  });
-  elements.gifRepeatGroup?.classList.toggle("hidden", state.gifOutputFormat !== "gif");
-  elements.gifRepeatCountWrap.classList.toggle(
-    "hidden",
-    state.gifOutputFormat !== "gif" || state.gifRepeatMode !== "custom"
-  );
+function updateGifMediaSettingsVisibility() {
+  const selected = getSelectedImages();
+  const hasSelection = selected.length > 0;
+  const hasImage = selected.some((item) => item.mediaType !== "video");
+  const hasVideo = selected.some((item) => item.mediaType === "video");
+  elements.gifImageSettings?.classList.toggle("hidden", hasSelection && !hasImage);
+  elements.gifVideoSettings?.classList.toggle("hidden", hasSelection && !hasVideo);
+}
+
+function syncTrimLabels(start, end) {
+  if (elements.trimStartLabel) elements.trimStartLabel.textContent = `开始 ${formatTimeLabel(start)}`;
+  if (elements.trimEndLabel) elements.trimEndLabel.textContent = `结束 ${formatTimeLabel(end)}`;
+  if (elements.trimDurationLabel) elements.trimDurationLabel.textContent = `时长 ${formatTimeLabel(end - start)}`;
+}
+
+async function updateVideoTrimUI() {
+  if (!elements.videoTrimPanel || !elements.trimPreviewVideo) return;
+  const selected = getSelectedImages();
+  const videoItem = selected.length === 1 && selected[0].mediaType === "video" ? selected[0] : null;
+  if (!videoItem || state.exportMode !== "gif") {
+    elements.videoTrimPanel.classList.add("hidden");
+    elements.trimPreviewVideo.pause();
+    elements.trimPreviewVideo.removeAttribute("src");
+    elements.trimPreviewVideo.load();
+    return;
+  }
+
+  elements.videoTrimPanel.classList.remove("hidden");
+  const sources = getVideoSourceCandidates(videoItem);
+  const src = sources[0];
+  if (!src) {
+    elements.videoTrimPanel.classList.add("hidden");
+    return;
+  }
+  if (elements.trimPreviewVideo.dataset.src !== src) {
+    elements.trimPreviewVideo.dataset.src = src;
+    elements.trimPreviewVideo.src = src;
+    elements.trimPreviewVideo.load();
+  }
+
+  const applyTrim = () => {
+    const duration = Number.isFinite(elements.trimPreviewVideo.duration) && elements.trimPreviewVideo.duration > 0
+      ? elements.trimPreviewVideo.duration
+      : Math.max(state.videoClipStart + state.videoClipDuration, 3);
+    const maxDuration = Math.max(0.5, duration);
+    const start = clamp(state.videoClipStart, 0, Math.max(0, maxDuration - 0.5));
+    const end = clamp(start + state.videoClipDuration, start + 0.5, maxDuration);
+    state.videoClipStart = start;
+    state.videoClipDuration = Math.max(0.5, end - start);
+    elements.gifVideoStartInput.value = Number(state.videoClipStart.toFixed(1));
+    elements.gifVideoClipInput.value = Number(state.videoClipDuration.toFixed(1));
+    elements.trimStartRange.max = String(maxDuration);
+    elements.trimEndRange.max = String(maxDuration);
+    elements.trimStartRange.value = String(start);
+    elements.trimEndRange.value = String(end);
+    syncTrimLabels(start, end);
+    elements.trimPreviewVideo.ontimeupdate = () => {
+      if (elements.trimPreviewVideo.currentTime >= end) {
+        elements.trimPreviewVideo.currentTime = start;
+        elements.trimPreviewVideo.play().catch(() => {});
+      }
+    };
+    if (Math.abs(elements.trimPreviewVideo.currentTime - start) > 0.12) {
+      elements.trimPreviewVideo.currentTime = start;
+    }
+  };
+
+  if (Number.isFinite(elements.trimPreviewVideo.duration) && elements.trimPreviewVideo.duration > 0) {
+    applyTrim();
+    elements.trimPreviewVideo.play().catch(() => {});
+    return;
+  }
+
+  elements.trimPreviewVideo.onloadedmetadata = () => {
+    applyTrim();
+    elements.trimPreviewVideo.play().catch(() => {});
+  };
 }
 
 function updateCandidateFilterButtons() {
@@ -457,44 +489,16 @@ function loadVideoElement(src) {
     video.preload = "auto";
     video.muted = true;
     video.playsInline = true;
-    if (/^https?:/i.test(String(src || ""))) {
-      video.crossOrigin = "anonymous";
-    }
-    let settled = false;
+    video.crossOrigin = "anonymous";
     const cleanup = () => {
       video.onloadeddata = null;
-      video.onloadedmetadata = null;
-      video.oncanplay = null;
       video.onerror = null;
     };
-    const finish = async () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      try {
-        const previewTime = getVideoPreviewTime(video.duration);
-        if (previewTime > 0) {
-          await seekVideo(video, previewTime).catch(() => {});
-        }
-        video.pause();
-        resolve(video);
-      } catch (error) {
-        reject(error);
-      }
-    };
-    video.onloadedmetadata = () => {
-      if (video.readyState >= 1) {
-        finish();
-      }
-    };
-    video.oncanplay = () => {
-      finish();
-    };
     video.onloadeddata = () => {
-      finish();
+      cleanup();
+      resolve(video);
     };
     video.onerror = () => {
-      settled = true;
       cleanup();
       reject(new Error("视频加载失败"));
     };
@@ -549,14 +553,19 @@ function loadImageWithOptions(src, options = {}) {
 async function loadRenderableImage(item) {
   if (item.mediaType === "video") {
     let lastError = null;
-    for (const src of getVideoSourceCandidates(item, "proxy")) {
+    for (const src of getVideoSourceCandidates(item)) {
       try {
         const video = await loadVideoElement(src);
-        await seekVideo(video, getVideoPreviewTime(video.duration));
+        await seekVideo(video, 0);
         return captureVideoFrame(video);
       } catch (error) {
         lastError = error;
       }
+    }
+    if (item.posterUrl) {
+      try {
+        return await loadImageWithOptions(item.posterUrl, { src: item.posterUrl });
+      } catch {}
     }
     throw lastError || new Error("视频加载失败");
   }
@@ -633,24 +642,27 @@ function clearGifPreviewUrl() {
   }
 }
 
-function clearMp4PreviewUrl() {
-  if (state.mp4PreviewUrl) {
-    URL.revokeObjectURL(state.mp4PreviewUrl);
-    state.mp4PreviewUrl = null;
-  }
-}
-
-function clearMainMediaPreview() {
-  clearGifPreviewUrl();
-  clearMp4PreviewUrl();
-  elements.previewGif.removeAttribute("src");
-  elements.previewGif.style.display = "none";
-  elements.previewGif.classList.add("hidden");
+function clearVideoPreview() {
+  if (!elements.previewVideo) return;
   elements.previewVideo.pause();
   elements.previewVideo.removeAttribute("src");
   elements.previewVideo.load();
-  elements.previewVideo.style.display = "none";
   elements.previewVideo.classList.add("hidden");
+  elements.previewVideo.style.display = "none";
+  elements.previewVideo.onloadedmetadata = null;
+  elements.previewVideo.ontimeupdate = null;
+}
+
+function scheduleGifPreviewRender() {
+  if (state.gifPreviewTimer) {
+    clearTimeout(state.gifPreviewTimer);
+  }
+  state.gifPreviewTimer = setTimeout(() => {
+    state.gifPreviewTimer = null;
+    if (state.exportMode === "gif") {
+      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    }
+  }, 180);
 }
 
 function clearModalPreviewUrl() {
@@ -667,16 +679,6 @@ function clearGroupPreviewUrls() {
     } catch {}
   });
   state.groupPreviewUrls = [];
-}
-
-function getVideoSourceCandidates(item, prefer = "proxy") {
-  const proxy = item.proxyUrl || item.renderSrc || item.src;
-  const direct = item.directSrc || item.previewSrc || item.src;
-  const ordered =
-    prefer === "direct"
-      ? [direct, proxy, item.previewSrc, item.src]
-      : [proxy, direct, item.previewSrc, item.src];
-  return Array.from(new Set(ordered.filter(Boolean)));
 }
 
 function bindPreviewRowDrag() {
@@ -725,11 +727,6 @@ function closePreviewModal() {
   elements.previewModal.classList.add("hidden");
   elements.previewModal.setAttribute("aria-hidden", "true");
   elements.modalPreviewImage.removeAttribute("src");
-  elements.modalPreviewImage.classList.add("hidden");
-  elements.modalPreviewVideo.pause();
-  elements.modalPreviewVideo.removeAttribute("src");
-  elements.modalPreviewVideo.load();
-  elements.modalPreviewVideo.classList.add("hidden");
   state.modalGroupKey = null;
   clearModalPreviewUrl();
 }
@@ -785,13 +782,14 @@ function renderCandidates() {
   if (!state.candidates.length) {
     elements.candidateGrid.className = "candidate-list empty";
     elements.candidateGrid.innerHTML = "<p>图片会显示在这里</p>";
+    updateGifMediaSettingsVisibility();
+    updateVideoTrimUI().catch(() => {});
     return;
   }
 
   elements.candidateGrid.className = "candidate-list";
   const grouped = new Map();
   const visibleCandidates = state.candidates.filter((item) => {
-    if (pageMode === "png" && item.mediaType === "video") return false;
     if (state.candidateFilter === "all") return true;
     return item.mediaType === state.candidateFilter;
   });
@@ -799,6 +797,8 @@ function renderCandidates() {
   if (!visibleCandidates.length) {
     elements.candidateGrid.className = "candidate-list empty";
     elements.candidateGrid.innerHTML = "<p>当前筛选下没有素材</p>";
+    updateGifMediaSettingsVisibility();
+    updateVideoTrimUI().catch(() => {});
     return;
   }
 
@@ -819,20 +819,17 @@ function renderCandidates() {
       const selected = state.selectedCandidateKeys.has(candidateKey);
       const direct = item.directSrc || item.previewSrc || item.src;
       const proxy = item.proxyUrl || item.renderSrc || direct;
-      const preferredVideoSrc = direct;
       const thumbMarkup =
         item.mediaType === "video"
           ? `
           <div class="candidate-video-shell">
             <video
               class="candidate-thumb candidate-thumb-video"
-              src="${escapeHtml(preferredVideoSrc)}"
+              src="${escapeHtml(direct)}"
               data-direct-src="${escapeHtml(direct)}"
               data-proxy-src="${escapeHtml(proxy)}"
               data-candidate-id="${escapeHtml(item.id)}"
               muted
-              autoplay
-              loop
               playsinline
               preload="metadata"
             ></video>
@@ -867,14 +864,10 @@ function renderCandidates() {
 
           <div class="card-body">
             <div class="selected-controls ${selected ? "" : "hidden"}">
-              ${
-                item.mediaType === "video"
-                  ? `<div class="selected-meta">视频片段请在右侧预览区拖动开始和结束进度条</div>`
-                  : `<label class="mini-field">
-                      <span>时长</span>
-                      <input class="mini-number" type="number" min="0.1" max="20" step="0.1" value="${item.duration}" data-duration-id="${escapeHtml(item.id)}" />
-                    </label>`
-              }
+              <label class="mini-field">
+                <span>${item.mediaType === "video" ? "片段时长" : "时长"}</span>
+                <input class="mini-number" type="number" min="0.1" max="20" step="0.1" value="${item.duration}" data-duration-id="${escapeHtml(item.id)}" />
+              </label>
               <div class="selected-actions">
                 <button class="remove-btn" data-remove-id="${escapeHtml(item.id)}" type="button">移除</button>
               </div>
@@ -904,6 +897,8 @@ function renderCandidates() {
       `
     )
     .join("");
+  updateGifMediaSettingsVisibility();
+  updateVideoTrimUI().catch(() => {});
 
   elements.candidateGrid.querySelectorAll("input[type='checkbox']").forEach((input) => {
     input.addEventListener("change", () => {
@@ -981,31 +976,17 @@ function renderCandidates() {
   elements.candidateGrid.querySelectorAll("video.candidate-thumb-video").forEach((video) => {
     video.addEventListener("loadeddata", async () => {
       try {
-        const current = state.candidates.find((item) => item.id === video.dataset.candidateId);
-        if (current && Number.isFinite(video.duration) && video.duration > 0) {
-          current.videoDuration = video.duration;
-          normalizeVideoClip(current);
-        }
-        await seekVideo(video, getVideoPreviewTime(video.duration));
-        video.play().catch(() => {});
+        await seekVideo(video, 0);
       } catch {}
     });
     video.addEventListener("error", () => {
       const current = state.candidates.find((item) => item.id === video.dataset.candidateId);
       if (!current) return;
-      if (!video.dataset.triedProxy && video.dataset.proxySrc && video.dataset.proxySrc !== video.dataset.directSrc) {
-        video.dataset.triedProxy = "1";
-        video.src = video.dataset.proxySrc;
-        video.load();
-        return;
-      }
       current.broken = true;
       state.selectedCandidateKeys.delete(getCandidateKey(current));
       renderCandidates();
     });
   });
-
-  updateGifSettingPanels();
 }
 
 function drawPngComposition(canvas, loaded, renderScale = 1, displayScale = 1) {
@@ -1105,27 +1086,38 @@ async function buildGifFrames(groupKey = null) {
   const frames = [];
   for (const item of selected) {
     if (item.mediaType === "video") {
-      const video = await loadVideoElement(item.renderSrc || item.directSrc || item.previewSrc || item.src);
-      if (Number.isFinite(video.duration) && video.duration > 0) {
-        item.videoDuration = video.duration;
+      let built = false;
+      for (const src of getVideoSourceCandidates(item)) {
+        try {
+          const video = await loadVideoElement(src);
+          const videoDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
+          const clipStart = Math.max(0, Math.min(state.videoClipStart || 0, Math.max(0, videoDuration - 0.2)));
+          const clipDuration = Math.max(
+            0.5,
+            Math.min(state.videoClipDuration || 3, Math.max(0.5, videoDuration - clipStart))
+          );
+          const frameCount = Math.max(4, Math.min(18, Math.round(clipDuration * 4)));
+          for (let index = 0; index < frameCount; index += 1) {
+            const progress = frameCount === 1 ? 0 : index / (frameCount - 1);
+            await seekVideo(video, clipStart + progress * clipDuration);
+            frames.push({
+              item: { ...item, duration: Math.max(0.08, clipDuration / frameCount) },
+              img: captureVideoFrame(video),
+            });
+          }
+          built = true;
+          break;
+        } catch {}
       }
-      const clip = normalizeVideoClip(item);
-      const videoDuration = clip.duration > 0 ? clip.duration : 1;
-      const clipStart = Math.max(0, Math.min(clip.start, Math.max(0, videoDuration - 0.2)));
-      const clipDuration = Math.max(
-        0.5,
-        Math.min(Math.max(0.5, clip.end - clip.start), Math.max(0.5, videoDuration - clipStart))
-      );
-      const frameCount = Math.max(4, Math.min(18, Math.round(clipDuration * 4)));
-      for (let index = 0; index < frameCount; index += 1) {
-        const progress = frameCount === 1 ? 0 : index / (frameCount - 1);
-        await seekVideo(video, clipStart + progress * clipDuration);
+      if (!built && item.posterUrl) {
         frames.push({
-          item: { ...item, duration: Math.max(0.08, clipDuration / frameCount) },
-          img: captureVideoFrame(video),
+          item,
+          img: await loadImageWithOptions(item.posterUrl, { src: item.posterUrl }),
         });
+        built = true;
       }
-      continue;
+      if (built) continue;
+      throw new Error("视频加载失败");
     }
     frames.push({
       item,
@@ -1135,200 +1127,10 @@ async function buildGifFrames(groupKey = null) {
   return frames;
 }
 
-function renderVideoClipEditors(groupKey = null) {
-  if (!elements.videoClipEditors) return;
-  const { videos } = getGifSelectionSummary(groupKey);
-  if (!(state.exportMode === "gif" && videos.length)) {
-    elements.videoClipEditors.innerHTML = "";
-    elements.videoClipEditors.classList.add("hidden");
-    return;
-  }
-
-  elements.videoClipEditors.innerHTML = videos
-    .map((item, index) => {
-      const direct = item.directSrc || item.previewSrc || item.src;
-      const proxy = item.proxyUrl || item.renderSrc || direct;
-      const preferredVideoSrc = direct;
-      const clip = normalizeVideoClip(item);
-      const max = clip.duration > 0 ? clip.duration : Math.max(6, clip.end);
-      const clipLength = Math.max(0.1, clip.end - clip.start);
-      return `
-        <div class="clip-editor-card">
-          <div class="clip-editor-head">
-            <strong>视频 ${index + 1}</strong>
-            <span>${escapeHtml(item.name || "未命名视频")}</span>
-          </div>
-          <div class="clip-editor-stage">
-            <video
-              class="clip-editor-video"
-              src="${escapeHtml(preferredVideoSrc)}"
-              data-direct-src="${escapeHtml(direct)}"
-              data-proxy-src="${escapeHtml(proxy)}"
-              data-clip-video-id="${escapeHtml(item.id)}"
-              controls
-              muted
-              playsinline
-              preload="metadata"
-            ></video>
-            <button class="mini-btn ghost clip-preview-btn" data-clip-preview-id="${escapeHtml(item.id)}" type="button">预览片段</button>
-          </div>
-          <div class="clip-editor-labels clip-editor-summary">
-            <span data-start-label="${escapeHtml(item.id)}">开始 ${formatSecondsLabel(clip.start)}</span>
-            <span data-length-label="${escapeHtml(item.id)}">片段 ${formatSecondsLabel(clipLength)} / 全长 ${formatSecondsLabel(max)}</span>
-            <span data-end-label="${escapeHtml(item.id)}">结束 ${formatSecondsLabel(clip.end)}</span>
-          </div>
-          <div class="clip-editor-track-wrap">
-            <div class="clip-editor-track">
-              <div class="clip-editor-track-fill" data-clip-fill="${escapeHtml(item.id)}"></div>
-            </div>
-            <input class="clip-range clip-range-start" type="range" min="0" max="${max}" step="0.1" value="${clip.start}" data-clip-start-id="${escapeHtml(item.id)}" />
-            <input class="clip-range clip-range-end" type="range" min="0.1" max="${max}" step="0.1" value="${clip.end}" data-clip-end-id="${escapeHtml(item.id)}" />
-          </div>
-          <div class="clip-editor-foot">
-            <span class="clip-editor-tip">拖动两端进度条，决定 GIF 从哪开始、到哪结束</span>
-            <button class="mini-btn ghost" data-clip-reset-id="${escapeHtml(item.id)}" type="button">重置片段</button>
-          </div>
-        </div>
-      `;
-    })
-    .join("");
-  elements.videoClipEditors.classList.remove("hidden");
-
-  const syncClipUI = (item) => {
-    const clip = normalizeVideoClip(item);
-    const selectorId = CSS.escape(item.id);
-    const startLabel = elements.videoClipEditors.querySelector(`[data-start-label="${selectorId}"]`);
-    const endLabel = elements.videoClipEditors.querySelector(`[data-end-label="${selectorId}"]`);
-    const lengthLabel = elements.videoClipEditors.querySelector(`[data-length-label="${selectorId}"]`);
-    const startInput = elements.videoClipEditors.querySelector(`[data-clip-start-id="${selectorId}"]`);
-    const endInput = elements.videoClipEditors.querySelector(`[data-clip-end-id="${selectorId}"]`);
-    const fill = elements.videoClipEditors.querySelector(`[data-clip-fill="${selectorId}"]`);
-    const max = clip.duration > 0 ? clip.duration : Math.max(6, clip.end);
-    if (startLabel) startLabel.textContent = `开始 ${formatSecondsLabel(clip.start)}`;
-    if (endLabel) endLabel.textContent = `结束 ${formatSecondsLabel(clip.end)}`;
-    if (lengthLabel) {
-      lengthLabel.textContent = `片段 ${formatSecondsLabel(Math.max(0.1, clip.end - clip.start))} / 全长 ${formatSecondsLabel(max)}`;
-    }
-    if (startInput) {
-      startInput.max = String(max);
-      startInput.value = String(clip.start);
-    }
-    if (endInput) {
-      endInput.max = String(max);
-      endInput.value = String(clip.end);
-    }
-    if (fill) {
-      const left = max > 0 ? (clip.start / max) * 100 : 0;
-      const width = max > 0 ? ((clip.end - clip.start) / max) * 100 : 100;
-      fill.style.left = `${left}%`;
-      fill.style.width = `${Math.max(0, width)}%`;
-    }
-  };
-
-  elements.videoClipEditors.querySelectorAll(".clip-editor-video").forEach((video) => {
-    video.addEventListener("loadedmetadata", () => {
-      const item = state.candidates.find((entry) => entry.id === video.dataset.clipVideoId);
-      if (!item) return;
-      if (Number.isFinite(video.duration) && video.duration > 0) {
-        item.videoDuration = video.duration;
-      }
-      syncClipUI(item);
-      try {
-        video.currentTime = getVideoPreviewTime(video.duration);
-      } catch {}
-    });
-    video.addEventListener("timeupdate", () => {
-      const item = state.candidates.find((entry) => entry.id === video.dataset.clipVideoId);
-      if (!item) return;
-      const clip = normalizeVideoClip(item);
-      if (!video.paused && video.currentTime >= clip.end - 0.02) {
-        video.pause();
-        try {
-          video.currentTime = clip.start;
-        } catch {}
-      }
-    });
-    video.addEventListener("error", () => {
-      if (!video.dataset.triedProxy && video.dataset.proxySrc && video.dataset.proxySrc !== video.dataset.directSrc) {
-        video.dataset.triedProxy = "1";
-        video.src = video.dataset.proxySrc;
-        video.load();
-      }
-    });
-  });
-
-  elements.videoClipEditors.querySelectorAll("[data-clip-start-id]").forEach((input) => {
-    input.addEventListener("input", () => {
-      const item = state.candidates.find((entry) => entry.id === input.dataset.clipStartId);
-      if (!item) return;
-      item.clipStart = Number.parseFloat(input.value) || 0;
-      if (item.clipEnd <= item.clipStart + 0.1) item.clipEnd = item.clipStart + 0.1;
-      syncClipUI(item);
-      const selectorId = CSS.escape(item.id);
-      const video = elements.videoClipEditors.querySelector(`[data-clip-video-id="${selectorId}"]`);
-      if (video) {
-        try {
-          video.currentTime = item.clipStart;
-        } catch {}
-      }
-    });
-    input.addEventListener("change", () => {
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    });
-  });
-
-  elements.videoClipEditors.querySelectorAll("[data-clip-end-id]").forEach((input) => {
-    input.addEventListener("input", () => {
-      const item = state.candidates.find((entry) => entry.id === input.dataset.clipEndId);
-      if (!item) return;
-      item.clipEnd = Number.parseFloat(input.value) || item.clipEnd;
-      if (item.clipEnd <= item.clipStart + 0.1) item.clipEnd = item.clipStart + 0.1;
-      syncClipUI(item);
-      const selectorId = CSS.escape(item.id);
-      const video = elements.videoClipEditors.querySelector(`[data-clip-video-id="${selectorId}"]`);
-      if (video && video.currentTime > item.clipEnd) {
-        try {
-          video.currentTime = item.clipEnd;
-        } catch {}
-      }
-    });
-    input.addEventListener("change", () => {
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    });
-  });
-
-  elements.videoClipEditors.querySelectorAll("[data-clip-preview-id]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const item = state.candidates.find((entry) => entry.id === button.dataset.clipPreviewId);
-      if (!item) return;
-      const selectorId = CSS.escape(item.id);
-      const video = elements.videoClipEditors.querySelector(`[data-clip-video-id="${selectorId}"]`);
-      if (!video) return;
-      const clip = normalizeVideoClip(item);
-      try {
-        video.pause();
-        video.currentTime = clip.start;
-        await video.play();
-      } catch {}
-    });
-  });
-
-  elements.videoClipEditors.querySelectorAll("[data-clip-reset-id]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const item = state.candidates.find((entry) => entry.id === button.dataset.clipResetId);
-      if (!item) return;
-      const duration = Number.isFinite(item.videoDuration) && item.videoDuration > 0 ? item.videoDuration : 0;
-      item.clipStart = 0;
-      item.clipEnd = duration > 0 ? Math.max(0.5, Math.min(duration, 3)) : 3;
-      syncClipUI(item);
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    });
-  });
-}
-
 async function renderGifPreview(groupKey = null) {
   const gifBlob = await generateGifBlob(groupKey, false);
-  clearMainMediaPreview();
+  clearGifPreviewUrl();
+  clearVideoPreview();
   state.gifPreviewUrl = URL.createObjectURL(gifBlob);
   elements.previewGif.src = state.gifPreviewUrl;
   elements.previewGif.style.width = "";
@@ -1339,113 +1141,18 @@ async function renderGifPreview(groupKey = null) {
   setStatus(`已生成 1 张 GIF，包含 ${getSelectedImages(groupKey).length} 帧`);
 }
 
-async function getMp4EncoderConfig(width, height) {
-  if (typeof VideoEncoder === "undefined" || typeof VideoFrame === "undefined") {
-    throw new Error("当前浏览器不支持 MP4 导出");
-  }
-  const candidates = [
-    { codec: "avc1.42001f", avc: { format: "avc" } },
-    { codec: "avc1.42E01E", avc: { format: "avc" } },
-    { codec: "avc1.4d401f", avc: { format: "avc" } },
-  ];
-  for (const candidate of candidates) {
-    const config = {
-      ...candidate,
-      width,
-      height,
-      bitrate: Math.max(1_200_000, Math.round(width * height * 3.2)),
-      framerate: 30,
-    };
-    try {
-      const supported = await VideoEncoder.isConfigSupported(config);
-      if (supported?.supported) return config;
-    } catch {}
-  }
-  throw new Error("当前浏览器不支持 MP4 编码");
-}
-
-async function generateMp4Blob(groupKey = null, showProgress = true) {
-  const frames = await buildGifFrames(groupKey);
-  if (!frames.length) {
-    throw new Error("没有可导出的帧");
-  }
-  const width = state.gifWidth;
-  const height = state.gifHeight;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-
-  const target = new ArrayBufferTarget();
-  const muxer = new Muxer({
-    target,
-    fastStart: "in-memory",
-    video: {
-      codec: "avc",
-      width,
-      height,
-    },
-  });
-  const encoderConfig = await getMp4EncoderConfig(width, height);
-  const encoder = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-    error: (error) => {
-      throw error;
-    },
-  });
-  encoder.configure(encoderConfig);
-
-  let timestamp = 0;
-  for (let index = 0; index < frames.length; index += 1) {
-    const frame = frames[index];
-    drawGifFrame(ctx, frame.img, width, height);
-    const duration = Math.max(0.08, Number(frame.item.duration) || 0.08);
-    const durationUs = Math.round(duration * 1_000_000);
-    const videoFrame = new VideoFrame(canvas, {
-      timestamp,
-      duration: durationUs,
-    });
-    encoder.encode(videoFrame, {
-      keyFrame: index === 0 || index % 24 === 0,
-    });
-    videoFrame.close();
-    timestamp += durationUs;
-    if (showProgress) {
-      setStatus(`正在生成 MP4… ${index + 1}/${frames.length}`);
-    }
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-  }
-
-  await encoder.flush();
-  encoder.close();
-  muxer.finalize();
-  return new Blob([target.buffer], { type: "video/mp4" });
-}
-
-async function renderMp4Preview(groupKey = null) {
-  const mp4Blob = await generateMp4Blob(groupKey, false);
-  clearMainMediaPreview();
-  state.mp4PreviewUrl = URL.createObjectURL(mp4Blob);
-  elements.previewVideo.src = state.mp4PreviewUrl;
-  elements.previewVideo.style.display = "block";
-  elements.previewVideo.classList.remove("hidden");
-  elements.previewCanvas.style.display = "none";
-  setStatus(`已生成 1 个 MP4，包含 ${getSelectedImages(groupKey).length} 帧`);
-}
-
 async function renderPreview() {
   const groups = getSelectedGroups();
-  renderVideoClipEditors();
   syncPreviewGroupSelection(groups);
+  updateVideoTrimUI().catch(() => {});
   if (!groups.length) {
     elements.previewCanvas.style.display = "none";
-    clearMainMediaPreview();
+    elements.previewGif.style.display = "none";
+    elements.previewGif.classList.add("hidden");
+    clearVideoPreview();
     elements.previewGallery.innerHTML = "";
     elements.previewGallery.classList.add("hidden");
-    elements.videoClipEditors.innerHTML = "";
-    elements.videoClipEditors.classList.add("hidden");
+    clearGifPreviewUrl();
     clearGroupPreviewUrls();
     closePreviewModal();
     elements.emptyPreview.style.display = "grid";
@@ -1458,13 +1165,12 @@ async function renderPreview() {
     elements.previewGallery.classList.add("hidden");
     clearGroupPreviewUrls();
     if (state.exportMode === "gif") {
-      if (state.gifOutputFormat === "mp4") {
-        await renderMp4Preview(groups[0].key);
-      } else {
-        await renderGifPreview(groups[0].key);
-      }
+      await renderGifPreview(groups[0].key);
     } else {
-      clearMainMediaPreview();
+      clearGifPreviewUrl();
+      clearVideoPreview();
+      elements.previewGif.style.display = "none";
+      elements.previewGif.classList.add("hidden");
       await renderPngPreview(groups[0].key);
       elements.previewCanvas.style.display = "block";
     }
@@ -1473,25 +1179,20 @@ async function renderPreview() {
   }
 
   elements.previewCanvas.style.display = "none";
-  clearMainMediaPreview();
+  elements.previewGif.style.display = "none";
+  elements.previewGif.classList.add("hidden");
+  clearVideoPreview();
+  clearGifPreviewUrl();
   clearGroupPreviewUrls();
 
   const cards = [];
   for (const group of groups) {
     const blob =
-      state.exportMode === "gif"
-        ? state.gifOutputFormat === "mp4"
-          ? await generateMp4Blob(group.key, false)
-          : await generateGifBlob(group.key, false)
-        : await generatePngBlob(group.key);
+      state.exportMode === "gif" ? await generateGifBlob(group.key, false) : await generatePngBlob(group.key);
     if (!blob) continue;
     const url = URL.createObjectURL(blob);
     state.groupPreviewUrls.push(url);
     const checked = state.selectedPreviewGroupKeys.has(group.key);
-    const mediaMarkup =
-      state.exportMode === "gif" && state.gifOutputFormat === "mp4"
-        ? `<video src="${escapeHtml(url)}" controls playsinline preload="metadata"></video>`
-        : `<img src="${escapeHtml(url)}" alt="${escapeHtml(group.label)} 预览" data-open-group="${escapeHtml(group.key)}" />`;
     cards.push(`
       <article class="preview-group-card" data-group-key="${escapeHtml(group.key)}">
         <div class="preview-group-head">
@@ -1506,7 +1207,7 @@ async function renderPreview() {
         </div>
         <div class="preview-group-media-scroll">
           <div class="preview-group-media">
-          ${mediaMarkup}
+          <img src="${escapeHtml(url)}" alt="${escapeHtml(group.label)} 预览" data-open-group="${escapeHtml(group.key)}" />
           </div>
         </div>
       </article>
@@ -1536,9 +1237,7 @@ async function renderPreview() {
   });
   bindPreviewRowDrag();
 
-  const label =
-    state.exportMode === "gif" ? (state.gifOutputFormat === "mp4" ? " MP4" : " GIF") : "拼图";
-  setStatus(`已生成 ${cards.length} 个${label}，按链接分开展示`);
+  setStatus(`已生成 ${cards.length} 张${state.exportMode === "gif" ? " GIF" : "拼图"}，按链接分开展示`);
   elements.emptyPreview.style.display = "none";
 }
 
@@ -1595,10 +1294,7 @@ async function openPreviewModal(groupKey = null) {
   clearModalPreviewUrl();
   let blob = null;
   if (state.exportMode === "gif") {
-    blob =
-      state.gifOutputFormat === "mp4"
-        ? await generateMp4Blob(groupKey, false)
-        : await generateGifBlob(groupKey, false);
+    blob = await generateGifBlob(groupKey, false);
   } else {
     blob = await generatePngBlob(groupKey);
   }
@@ -1610,17 +1306,7 @@ async function openPreviewModal(groupKey = null) {
 
   state.modalPreviewUrl = URL.createObjectURL(blob);
   state.modalGroupKey = groupKey;
-  if (state.exportMode === "gif" && state.gifOutputFormat === "mp4") {
-    elements.modalPreviewImage.classList.add("hidden");
-    elements.modalPreviewVideo.src = state.modalPreviewUrl;
-    elements.modalPreviewVideo.classList.remove("hidden");
-  } else {
-    elements.modalPreviewVideo.pause();
-    elements.modalPreviewVideo.removeAttribute("src");
-    elements.modalPreviewVideo.classList.add("hidden");
-    elements.modalPreviewImage.src = state.modalPreviewUrl;
-    elements.modalPreviewImage.classList.remove("hidden");
-  }
+  elements.modalPreviewImage.src = state.modalPreviewUrl;
   elements.previewModal.classList.remove("hidden");
   elements.previewModal.setAttribute("aria-hidden", "false");
 }
@@ -1634,22 +1320,11 @@ async function downloadCurrentOutput(groupKey = null, withStatus = true) {
 
   if (state.exportMode === "gif") {
     try {
-      const blob =
-        state.gifOutputFormat === "mp4"
-          ? await generateMp4Blob(groupKey)
-          : await generateGifBlob(groupKey);
+      const blob = await generateGifBlob(groupKey);
       downloadBlob(blob, buildDownloadFilename(groupKey));
-      if (withStatus) {
-        setStatus(
-          state.gifOutputFormat === "mp4"
-            ? `MP4 已开始下载，共 ${selectedImages.length} 帧`
-            : `GIF 已开始下载，共 ${selectedImages.length} 帧`
-        );
-      }
+      if (withStatus) setStatus(`GIF 已开始下载，共 ${selectedImages.length} 帧`);
     } catch (error) {
-      if (withStatus) {
-        setStatus(`${state.gifOutputFormat.toUpperCase()} 生成失败：${error.message}`);
-      }
+      if (withStatus) setStatus(`GIF 生成失败：${error.message}`);
     }
     return;
   }
@@ -1692,8 +1367,6 @@ function addLocalFiles(fileList) {
       selectionKey: `local-upload::${objectUrl}`,
       mediaType,
       fileType: file.type,
-      clipStart: 0,
-      clipEnd: mediaType === "video" ? 3 : 0,
     });
     state.candidates.push(candidate);
     state.selectedCandidateKeys.add(candidate.selectionKey);
@@ -1702,7 +1375,6 @@ function addLocalFiles(fileList) {
   dedupeCandidates();
   renderCandidates();
   renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-  setStatus(`已添加 ${files.length} 个本地素材`);
 }
 
 async function extractImagesFromPage() {
@@ -1855,7 +1527,7 @@ function downloadBlob(blob, filename) {
 }
 
 function buildDownloadFilename(groupKey = null) {
-  const ext = state.exportMode === "gif" ? state.gifOutputFormat : "png";
+  const ext = state.exportMode === "gif" ? "gif" : "png";
   if (!groupKey) {
     return `collage-${state.layout}-${Date.now()}.${ext}`;
   }
@@ -1946,11 +1618,6 @@ function bindEvents() {
   });
   elements.previewGif.addEventListener("click", () => {
     if (state.exportMode === "gif") {
-      openPreviewModal().catch((error) => setStatus(`高清预览失败：${error.message}`));
-    }
-  });
-  elements.previewVideo.addEventListener("click", () => {
-    if (state.exportMode === "gif" && state.gifOutputFormat === "mp4") {
       openPreviewModal().catch((error) => setStatus(`高清预览失败：${error.message}`));
     }
   });
@@ -2063,8 +1730,45 @@ function bindEvents() {
       20
     );
     elements.gifDurationInput.value = state.defaultGifDuration;
-    if (state.exportMode === "gif" && getGifSelectionSummary().hasImage) {
+  });
+
+  elements.gifVideoStartInput.addEventListener("change", () => {
+    state.videoClipStart = parsePositiveFloat(elements.gifVideoStartInput.value, state.videoClipStart, 0, 600);
+    elements.gifVideoStartInput.value = state.videoClipStart;
+    updateVideoTrimUI().catch(() => {});
+    if (state.exportMode === "gif") {
       renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    }
+  });
+
+  elements.gifVideoClipInput.addEventListener("change", () => {
+    state.videoClipDuration = parsePositiveFloat(elements.gifVideoClipInput.value, state.videoClipDuration, 0.5, 60);
+    elements.gifVideoClipInput.value = state.videoClipDuration;
+    updateVideoTrimUI().catch(() => {});
+    if (state.exportMode === "gif") {
+      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    }
+  });
+
+  elements.trimStartRange?.addEventListener("input", () => {
+    const maxEnd = Number(elements.trimEndRange?.value || state.videoClipStart + state.videoClipDuration);
+    const nextStart = Math.min(Number(elements.trimStartRange.value), Math.max(0, maxEnd - 0.5));
+    state.videoClipStart = nextStart;
+    state.videoClipDuration = Math.max(0.5, maxEnd - nextStart);
+    updateVideoTrimUI().catch(() => {});
+    if (state.exportMode === "gif") {
+      scheduleGifPreviewRender();
+    }
+  });
+
+  elements.trimEndRange?.addEventListener("input", () => {
+    const start = Number(elements.trimStartRange?.value || state.videoClipStart);
+    const nextEnd = Math.max(start + 0.5, Number(elements.trimEndRange.value));
+    state.videoClipStart = start;
+    state.videoClipDuration = Math.max(0.5, nextEnd - start);
+    updateVideoTrimUI().catch(() => {});
+    if (state.exportMode === "gif") {
+      scheduleGifPreviewRender();
     }
   });
 
@@ -2080,18 +1784,9 @@ function bindEvents() {
     elements.gifRepeatCountInput.value = state.gifRepeatCount;
   });
 
-  elements.gifOutputFormatButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      state.gifOutputFormat = button.dataset.gifOutputFormat === "mp4" ? "mp4" : "gif";
-      updateGifOutputFormatButtons();
-      updateExportModeButtons();
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    });
-  });
-
   elements.applyGifDurationBtn.addEventListener("click", () => {
     getSelectedImages().forEach((item) => {
-      if (item.mediaType !== "video") item.duration = state.defaultGifDuration;
+      item.duration = state.defaultGifDuration;
     });
     renderCandidates();
     setStatus("已把默认 GIF 速度应用到当前勾选图片");
@@ -2120,26 +1815,13 @@ function init() {
   updateExportModeButtons();
   updatePngScaleButtons();
   updateGifRepeatButtons();
-  updateGifOutputFormatButtons();
+  updateGifMediaSettingsVisibility();
   updateCandidateFilterButtons();
   updateAssistButtons();
   elements.gifBackgroundColor.value = state.backgroundColor;
   renderCandidates();
   bindEvents();
-
-  if (pageMode === "png") {
-    document.title = "拼图工具";
-    const title = document.querySelector(".panel-title h2");
-    if (title) title.textContent = "拼图设置";
-    const uploadText = elements.dropZone?.querySelector("p");
-    const uploadHint = elements.dropZone?.querySelector("span");
-    if (uploadText) uploadText.textContent = "上传图片";
-    if (uploadHint) uploadHint.textContent = "拖拽或点击选择，只用于拼图";
-  } else {
-    document.title = "转 GIF 工具";
-    const title = document.querySelector(".panel-title h2");
-    if (title) title.textContent = "转 GIF 设置";
-  }
+  updateVideoTrimUI().catch(() => {});
 }
 
 init();

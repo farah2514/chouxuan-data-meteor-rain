@@ -13,7 +13,6 @@ const ASSISTED_EXTRACT_ENABLED = process.env.ALLOW_ASSISTED_EXTRACT !== "false";
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
-  ".mjs": "application/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
@@ -390,22 +389,20 @@ function filterTikTokImages(items) {
         source.includes("meta") ||
         source.includes("link") ||
         source.includes("background") ||
+        source.includes("screenshot") ||
         value.includes("cover") ||
         value.includes("poster") ||
         value.includes("thumb")
       );
     });
 
+    const topCover = toScoredImages(coverCandidates)[0] || null;
     const videos = toScoredImages(videoPrimary).slice(0, 4).map((item) => ({
       ...item,
       postType: "video",
+      posterUrl: topCover?.url || item.posterUrl || "",
     }));
-    const covers = toScoredImages(coverCandidates).slice(0, 3).map((item) => ({
-      ...item,
-      postType: "video",
-      mediaRole: "cover",
-    }));
-    return [...videos, ...covers];
+    return videos;
   }
 
   const visiblePrimary = cleaned.filter((item) => {
@@ -795,6 +792,24 @@ async function extractImagesWithBrowser(targetUrl, options = {}) {
       ...(!visibleDomImages.length && !scriptImages.length ? networkFallback : []),
     ]);
 
+    const hasVideo = combined.some((item) => item.mediaType === "video");
+    const hasImage = combined.some((item) => item.mediaType !== "video");
+    if (hasVideo && !hasImage) {
+      try {
+        const screenshot = await page.screenshot({
+          type: "jpeg",
+          quality: 72,
+          fullPage: false,
+          animations: "disabled",
+        });
+        combined.push({
+          url: `data:image/jpeg;base64,${screenshot.toString("base64")}`,
+          source: "browser-screenshot",
+          mediaType: "image",
+        });
+      } catch {}
+    }
+
     return {
       images: combined,
       title: domData.title,
@@ -987,7 +1002,7 @@ async function handleExtract(reqUrl, res) {
   sendJson(res, 200, payload);
 }
 
-async function handleProxyMedia(req, reqUrl, res) {
+async function handleProxyMedia(reqUrl, res) {
   const target = reqUrl.searchParams.get("url");
   if (!target) {
     res.writeHead(400, {
@@ -1025,7 +1040,6 @@ async function handleProxyMedia(req, reqUrl, res) {
     : `${parsed.protocol}//${parsed.host}/`;
 
   try {
-    const rangeHeader = req.headers.range;
     const response = await fetch(parsed.toString(), {
       headers: {
         "User-Agent":
@@ -1033,7 +1047,6 @@ async function handleProxyMedia(req, reqUrl, res) {
         Accept: "*/*",
         Referer: referer,
         Origin: referer.replace(/\/$/, ""),
-        ...(rangeHeader ? { Range: rangeHeader } : {}),
       },
       redirect: "follow",
     });
@@ -1049,17 +1062,10 @@ async function handleProxyMedia(req, reqUrl, res) {
 
     const buffer = Buffer.from(await response.arrayBuffer());
     const contentType = response.headers.get("content-type") || "application/octet-stream";
-    res.writeHead(response.status, {
+    res.writeHead(200, {
       "Content-Type": contentType,
       "Cache-Control": "public, max-age=3600",
       "Access-Control-Allow-Origin": "*",
-      "Accept-Ranges": response.headers.get("accept-ranges") || "bytes",
-      ...(response.headers.get("content-range")
-        ? { "Content-Range": response.headers.get("content-range") }
-        : {}),
-      ...(response.headers.get("content-length")
-        ? { "Content-Length": response.headers.get("content-length") }
-        : {}),
     });
     res.end(buffer);
   } catch (error) {
@@ -1209,7 +1215,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (reqUrl.pathname === "/proxy-image" || reqUrl.pathname === "/proxy-media") {
-    await handleProxyMedia(req, reqUrl, res);
+    await handleProxyMedia(reqUrl, res);
     return;
   }
 

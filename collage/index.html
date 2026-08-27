@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>网页拼图工具</title>
-    <link rel="stylesheet" href="./styles.css?v=20260826d" />
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="page">
@@ -158,30 +158,51 @@
                 <input id="gifHeightInput" type="number" min="100" max="2400" step="10" value="960" />
               </label>
             </div>
-            <div class="control-group">
-              <label>导出格式</label>
-              <div class="segmented">
-                <button class="segment active" data-gif-output-format="gif" type="button">GIF</button>
-                <button class="segment" data-gif-output-format="mp4" type="button">MP4</button>
+            <div id="gifImageSettings" class="gif-subsection">
+              <div class="gif-subsection-title">图片设置</div>
+              <div class="control-grid">
+                <label class="field">
+                  <span>默认每张速度(s)</span>
+                  <input id="gifDurationInput" type="number" min="0.1" max="20" step="0.1" value="0.9" />
+                </label>
               </div>
             </div>
-            <div id="gifImageSettings" class="gif-typed-settings hidden">
-              <label class="field">
-                <span>默认每张速度(s)</span>
-                <input id="gifDurationInput" type="number" min="0.1" max="20" step="0.1" value="0.9" />
-              </label>
-              <div class="gif-helper">
-                <button id="applyGifDurationBtn" class="ghost">把默认速度应用到全部图片</button>
+            <div id="gifVideoSettings" class="gif-subsection">
+              <div class="gif-subsection-title">视频设置</div>
+              <div class="control-grid">
+                <label class="field">
+                  <span>视频开始时间(s)</span>
+                  <input id="gifVideoStartInput" type="number" min="0" max="600" step="0.1" value="0" />
+                </label>
+                <label class="field">
+                  <span>视频截取时长(s)</span>
+                  <input id="gifVideoClipInput" type="number" min="0.5" max="60" step="0.1" value="3" />
+                </label>
               </div>
-            </div>
-            <div id="gifVideoSettings" class="gif-typed-settings hidden">
-              <div class="gif-video-tip">选中视频后，右侧预览区会出现开始和结束进度条。</div>
+              <div id="videoTrimPanel" class="video-trim-panel hidden">
+                <video id="trimPreviewVideo" class="trim-preview-video" muted playsinline controls></video>
+                <div class="trim-range-group">
+                  <label class="field">
+                    <span>拖动开始位置</span>
+                    <input id="trimStartRange" type="range" min="0" max="100" step="0.01" value="0" />
+                  </label>
+                  <label class="field">
+                    <span>拖动结束位置</span>
+                    <input id="trimEndRange" type="range" min="0" max="100" step="0.01" value="100" />
+                  </label>
+                </div>
+                <div class="trim-time-row">
+                  <span id="trimStartLabel">开始 0.0s</span>
+                  <span id="trimDurationLabel">时长 3.0s</span>
+                  <span id="trimEndLabel">结束 3.0s</span>
+                </div>
+              </div>
             </div>
             <div class="control-group">
               <label for="gifBackgroundColor">GIF 背景色</label>
               <input id="gifBackgroundColor" type="color" value="#f5f7fb" />
             </div>
-            <div id="gifRepeatGroup" class="control-group gif-repeat-group">
+            <div class="control-group gif-repeat-group">
               <label>循环次数</label>
               <div class="segmented">
                 <button class="segment active" data-gif-repeat-mode="forever">无限循环</button>
@@ -193,6 +214,9 @@
               <span>自定义循环次数</span>
               <input id="gifRepeatCountInput" type="number" min="1" max="99" step="1" value="3" />
             </label>
+            <div class="gif-helper">
+              <button id="applyGifDurationBtn" class="ghost">把默认速度应用到全部</button>
+            </div>
           </div>
 
           <div class="preview-actions">
@@ -201,11 +225,10 @@
             <button id="downloadAllBtn">下载全部</button>
           </div>
 
-          <div id="videoClipEditors" class="video-clip-editors hidden"></div>
           <div class="preview-wrap">
             <canvas id="previewCanvas"></canvas>
             <img id="previewGif" class="preview-gif hidden" alt="GIF 动态预览" />
-            <video id="previewVideo" class="preview-gif hidden" muted controls playsinline preload="metadata"></video>
+            <video id="previewVideo" class="preview-gif hidden" muted autoplay playsinline loop controls></video>
             <div id="previewGallery" class="preview-gallery hidden"></div>
             <div id="emptyPreview" class="empty-preview">
               右侧会显示完整预览
@@ -227,11 +250,10 @@
         </div>
         <div class="preview-modal-body">
           <img id="modalPreviewImage" alt="高清预览图" />
-          <video id="modalPreviewVideo" class="hidden" controls playsinline preload="metadata"></video>
         </div>
       </div>
     </div>
 
-    <script type="module" src="./app.js?v=20260826d"></script>
+    <script type="module" src="./app.js"></script>
   </body>
   </html>
