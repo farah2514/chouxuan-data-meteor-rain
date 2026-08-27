@@ -71,6 +71,38 @@ function setCachedMedia(cacheKey, payload) {
   });
 }
 
+function guessMediaContentType(targetUrl, fallback = "application/octet-stream") {
+  const value = String(targetUrl || "").toLowerCase();
+  if (value.includes("mime_type=video_mp4") || value.includes(".mp4")) return "video/mp4";
+  if (value.includes(".webm")) return "video/webm";
+  if (value.includes(".mov")) return "video/quicktime";
+  if (value.startsWith("data:image/jpeg")) return "image/jpeg";
+  if (value.startsWith("data:image/png")) return "image/png";
+  return fallback;
+}
+
+function downloadWithCurl(targetUrl, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const args = ["-L", "--fail", "--silent", "--show-error", targetUrl];
+    Object.entries(headers).forEach(([key, value]) => {
+      if (value) args.unshift("-H", `${key}: ${value}`);
+    });
+    const child = spawn("curl", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout));
+        return;
+      }
+      reject(new Error(Buffer.concat(stderr).toString("utf-8") || `curl exited with code ${code}`));
+    });
+  });
+}
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -187,6 +219,15 @@ function getCachedExtract(key) {
   const cached = extractCache.get(key);
   if (!cached) return null;
   if (Date.now() - cached.createdAt > EXTRACT_CACHE_TTL_MS) {
+    extractCache.delete(key);
+    return null;
+  }
+  const payload = cached.payload;
+  if (
+    payload?.postType === "video" &&
+    Array.isArray(payload.images) &&
+    payload.images.some((item) => item?.mediaType === "video" && !item?.posterUrl)
+  ) {
     extractCache.delete(key);
     return null;
   }
@@ -840,6 +881,43 @@ async function extractImagesWithBrowser(targetUrl, options = {}) {
   }
 }
 
+async function capturePosterFallback(targetUrl) {
+  const { chromium } = await getPlaywright();
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 720, height: 1280 },
+    locale: "en-US",
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  });
+  const page = await context.newPage();
+
+  try {
+    await page.route("**/*", (route) => {
+      const type = route.request().resourceType();
+      if (type === "font" || type === "media") {
+        route.abort();
+        return;
+      }
+      route.continue();
+    });
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
+    await dismissCommonDialogs(page);
+    await sleep(1200);
+    const screenshot = await page.screenshot({
+      type: "jpeg",
+      quality: 78,
+      fullPage: false,
+      animations: "disabled",
+    });
+    return `data:image/jpeg;base64,${screenshot.toString("base64")}`;
+  } finally {
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+}
+
 async function fetchHtml(targetUrl, headers = getDesktopHeaders()) {
   const response = await fetch(targetUrl, {
     headers,
@@ -887,6 +965,63 @@ async function fetchHtmlWithFallbacks(targetUrl, hostname) {
     }
   }
   throw new Error(attempts.join("；") || (lastError instanceof Error ? lastError.message : "抓取页面失败"));
+}
+
+async function fetchTikTokDownloaderFallback(targetUrl) {
+  const payload = JSON.stringify({ url: targetUrl });
+  const data = await new Promise((resolve, reject) => {
+    const child = spawn(
+      "curl",
+      [
+        "-sS",
+        "-X",
+        "POST",
+        "https://mintapi.dev/api/tools/tiktok-video-downloader",
+        "-H",
+        "Content-Type: application/json",
+        "-H",
+        "Accept: application/json",
+        "--data",
+        payload,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(Buffer.concat(stderr).toString("utf-8") || `mintapi curl exited with code ${code}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(Buffer.concat(stdout).toString("utf-8")));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+  const cover = data?.cover || data?.raw?.data?.cover || data?.raw?.data?.origin_cover || "";
+  const play =
+    data?.links?.noWatermark ||
+    data?.links?.hd ||
+    data?.links?.watermark ||
+    data?.raw?.data?.play ||
+    data?.raw?.data?.hdplay ||
+    data?.raw?.data?.wmplay ||
+    "";
+  const duration = Number(data?.duration || data?.raw?.data?.duration || 0);
+  if (!play) {
+    throw new Error("兜底视频解析未返回可用地址");
+  }
+  return {
+    url: play,
+    posterUrl: cover,
+    duration,
+    source: "fallback:mintapi",
+  };
 }
 
 function buildFailureHint(parsed, baseHint, browserDetail, browserBodyText) {
@@ -986,16 +1121,37 @@ async function handleExtract(reqUrl, res) {
   }
 
   const mergedImages = [...htmlImages, ...scriptImages, ...browserImages];
-  const images = isTikTokHost(parsed.hostname)
+  let images = isTikTokHost(parsed.hostname)
     ? filterTikTokImages(mergedImages)
     : toScoredImages(mergedImages);
-  const postType = isTikTokHost(parsed.hostname)
+  let postType = isTikTokHost(parsed.hostname)
     ? images.some((item) => item.postType === "video" || item.mediaType === "video")
       ? "video"
       : "image"
     : images.some((item) => item.mediaType === "video")
       ? "video"
       : "image";
+
+  if (isTikTokHost(parsed.hostname) && (!images.length || /\/video\//i.test(parsed.pathname))) {
+    try {
+      const fallbackVideo = await fetchTikTokDownloaderFallback(parsed.toString());
+      images = [
+        {
+          url: fallbackVideo.url,
+          source: fallbackVideo.source,
+          mediaType: "video",
+          postType: "video",
+          posterUrl: fallbackVideo.posterUrl || "",
+        },
+      ];
+      postType = "video";
+      methods.push("mintapi-fallback");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      browserError = browserError ? `${browserError}；${detail}` : detail;
+    }
+  }
+
   if (!images.length) {
     sendJson(res, 422, {
       error: "没有提取到可用图片",
@@ -1003,6 +1159,51 @@ async function handleExtract(reqUrl, res) {
       methodsTried: methods.length ? methods : ["static", "script", "browser"],
     });
     return;
+  }
+
+  if (postType === "video") {
+    const fallbackPoster =
+      images.find((item) => item.mediaType !== "video" && item.url)?.url ||
+      mergedImages.find((item) => String(item.source || "").toLowerCase().includes("screenshot"))?.url ||
+      "";
+    if (fallbackPoster) {
+      images.forEach((item) => {
+        if (item.mediaType === "video" && !item.posterUrl) {
+          item.posterUrl = fallbackPoster;
+        }
+      });
+    }
+    if (images.some((item) => item.mediaType === "video" && !item.posterUrl)) {
+      try {
+        const screenshotPoster = await capturePosterFallback(parsed.toString());
+        if (screenshotPoster) {
+          images.forEach((item) => {
+            if (item.mediaType === "video" && !item.posterUrl) {
+              item.posterUrl = screenshotPoster;
+            }
+          });
+        }
+      } catch {}
+    }
+    if (
+      isTikTokHost(parsed.hostname) &&
+      images.some((item) => item.mediaType === "video" && /v16-webapp-prime\.tiktok\.com/i.test(item.url || ""))
+    ) {
+      try {
+        const fallbackVideo = await fetchTikTokDownloaderFallback(parsed.toString());
+        images.forEach((item) => {
+          if (item.mediaType === "video") {
+            item.url = fallbackVideo.url || item.url;
+            item.posterUrl = item.posterUrl || fallbackVideo.posterUrl || "";
+            item.source = `${item.source || "video"}+mintapi`;
+          }
+        });
+        methods.push("mintapi-fallback");
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        browserError = browserError ? `${browserError}；${detail}` : detail;
+      }
+    }
   }
 
   const payload = {
@@ -1146,28 +1347,31 @@ async function handleDownloadMedia(reqUrl, res) {
     : `${parsed.protocol}//${parsed.host}/`;
 
   try {
-    const response = await fetch(parsed.toString(), {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        Accept: "*/*",
-        Referer: referer,
-        Origin: referer.replace(/\/$/, ""),
-      },
-      redirect: "follow",
-    });
-
-    if (!response.ok) {
-      res.writeHead(502, {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Access-Control-Allow-Origin": "*",
+    const headers = {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      Accept: "*/*",
+      Referer: referer,
+      Origin: referer.replace(/\/$/, ""),
+    };
+    let buffer;
+    let contentType = "application/octet-stream";
+    try {
+      const response = await fetch(parsed.toString(), {
+        headers,
+        redirect: "follow",
       });
-      res.end(`视频下载失败：${response.status}`);
-      return;
-    }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const contentType = response.headers.get("content-type") || "application/octet-stream";
+      if (!response.ok) {
+        throw new Error(`视频下载失败：${response.status}`);
+      }
+
+      buffer = Buffer.from(await response.arrayBuffer());
+      contentType = response.headers.get("content-type") || guessMediaContentType(parsed.toString());
+    } catch (fetchError) {
+      buffer = await downloadWithCurl(parsed.toString(), headers);
+      contentType = guessMediaContentType(parsed.toString(), "video/mp4");
+    }
     setCachedMedia(parsed.toString(), { buffer, contentType });
     res.writeHead(200, {
       "Content-Type": contentType,
