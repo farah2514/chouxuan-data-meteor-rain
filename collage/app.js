@@ -1042,7 +1042,7 @@ function renderCandidates() {
           <div class="card-body">
             <div class="selected-controls ${selected ? "" : "hidden"}">
               <label class="mini-field">
-                <span>${item.mediaType === "video" ? "片段时长" : "时长"}</span>
+                <span>${item.mediaType === "video" ? "片段时长" : "停留时间"}</span>
                 <input class="mini-number" type="number" min="0.1" max="20" step="0.1" value="${item.duration}" data-duration-id="${escapeHtml(item.id)}" />
               </label>
               <div class="selected-actions">
@@ -1964,7 +1964,7 @@ function bindEvents() {
       item.duration = state.defaultGifDuration;
     });
     renderCandidates();
-    markPreviewDirty("已把默认 GIF 速度应用到当前勾选图片，点“刷新预览”查看结果");
+    markPreviewDirty("已把默认停留时间应用到当前勾选图片，点“刷新预览”查看结果");
   });
 
   elements.pageUrl.addEventListener("keydown", (event) => {
