@@ -80,6 +80,178 @@ def strip_internal_fields(row, headers):
     return {header: row.get(header, "") for header in headers}
 
 
+FORMULA_HYPERLINK_RE = re.compile(
+    r'^\s*=\s*(?:_xlfn\.)?hyperlink\s*\(\s*"([^"]+)"',
+    re.IGNORECASE,
+)
+QUOTED_URL_RE = re.compile(r'https?://[^\s"<>\']+|www\.[^\s"<>\']+', re.IGNORECASE)
+FORMULA_FUNCTION_RE = re.compile(r'^\s*(?:_xlfn\.)?([a-z_][a-z0-9_.]*)\s*\((.*)\)\s*$', re.IGNORECASE)
+CELL_REF_RE = re.compile(r'^\$?([A-Z]{1,4})\$?\d+$', re.IGNORECASE)
+
+
+def split_formula_args(text, separators=",;"):
+    parts = []
+    current = []
+    depth = 0
+    in_quotes = False
+    idx = 0
+
+    while idx < len(text):
+        char = text[idx]
+        if char == '"':
+            current.append(char)
+            if in_quotes and idx + 1 < len(text) and text[idx + 1] == '"':
+                current.append(text[idx + 1])
+                idx += 2
+                continue
+            in_quotes = not in_quotes
+            idx += 1
+            continue
+        if not in_quotes:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth = max(0, depth - 1)
+            elif depth == 0 and char in separators:
+                parts.append("".join(current).strip())
+                current = []
+                idx += 1
+                continue
+        current.append(char)
+        idx += 1
+
+    parts.append("".join(current).strip())
+    return parts
+
+
+def strip_outer_parentheses(text):
+    value = str(text or "").strip()
+    while value.startswith("(") and value.endswith(")"):
+        depth = 0
+        in_quotes = False
+        balanced = True
+        for idx, char in enumerate(value):
+            if char == '"':
+                if in_quotes and idx + 1 < len(value) and value[idx + 1] == '"':
+                    continue
+                in_quotes = not in_quotes
+            elif not in_quotes:
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                    if depth == 0 and idx != len(value) - 1:
+                        balanced = False
+                        break
+        if balanced:
+            value = value[1:-1].strip()
+        else:
+            break
+    return value
+
+
+def decode_formula_string_literal(text):
+    value = str(text or "").strip()
+    if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+        return value[1:-1].replace('""', '"')
+    return value
+
+
+def build_formula_reference_map(headers, row):
+    clean_headers = [header for header in headers if header and not str(header).startswith("__")]
+    reference_map = {}
+    for idx, header in enumerate(clean_headers, start=1):
+        reference_map[excel_col_name(idx)] = row.get(header, "")
+    return reference_map
+
+
+def evaluate_formula_expression(expression, headers, row, depth=0):
+    if depth > 8:
+        return str(expression or "").strip()
+
+    expr = strip_outer_parentheses(expression)
+    if not expr:
+        return ""
+
+    if expr.startswith("="):
+        expr = expr[1:].strip()
+
+    if len(expr) >= 2 and expr.startswith('"') and expr.endswith('"'):
+        return decode_formula_string_literal(expr)
+
+    concat_parts = split_formula_args(expr, separators="&")
+    if len(concat_parts) > 1:
+        return "".join(evaluate_formula_expression(part, headers, row, depth + 1) for part in concat_parts)
+
+    function_match = FORMULA_FUNCTION_RE.match(expr)
+    if function_match:
+        func_name = str(function_match.group(1) or "").split(".")[-1].lower()
+        inner = function_match.group(2) or ""
+        args = split_formula_args(inner)
+        if func_name == "hyperlink" and args:
+            return evaluate_formula_expression(args[0], headers, row, depth + 1)
+        if func_name in {"concatenate", "concat"}:
+            return "".join(evaluate_formula_expression(arg, headers, row, depth + 1) for arg in args)
+
+    cell_ref_match = CELL_REF_RE.fullmatch(expr)
+    if cell_ref_match:
+        column_name = cell_ref_match.group(1).upper()
+        referenced_value = build_formula_reference_map(headers, row).get(column_name, "")
+        if isinstance(referenced_value, str) and referenced_value.strip().startswith("=") and referenced_value.strip() != expr:
+            return extract_link_from_formula(referenced_value, headers, row, depth + 1)
+        return str(referenced_value or "")
+
+    url_match = QUOTED_URL_RE.search(expr)
+    if url_match:
+        return url_match.group(0).strip()
+
+    return decode_formula_string_literal(expr)
+
+
+def extract_link_from_formula(value, headers=None, row=None, depth=0):
+    text = str(value or "").strip()
+    if not text or not text.startswith("="):
+        return value
+
+    if headers and row:
+        evaluated = str(evaluate_formula_expression(text[1:], headers, row, depth + 1) or "").strip()
+        if evaluated:
+            if QUOTED_URL_RE.fullmatch(evaluated):
+                return evaluated
+            url_match = QUOTED_URL_RE.search(evaluated)
+            if url_match:
+                return url_match.group(0).strip()
+
+    hyperlink_match = FORMULA_HYPERLINK_RE.match(text)
+    if hyperlink_match:
+        return hyperlink_match.group(1).strip()
+
+    quoted_parts = re.findall(r'"([^"]+)"', text)
+    for part in quoted_parts:
+        candidate = str(part or "").strip()
+        if QUOTED_URL_RE.fullmatch(candidate):
+            return candidate
+
+    url_match = QUOTED_URL_RE.search(text)
+    if url_match:
+        return url_match.group(0).strip()
+
+    return text
+
+
+def normalize_export_cell(value, headers=None, row=None):
+    if isinstance(value, str):
+        return extract_link_from_formula(value, headers, row)
+    return value
+
+
+def normalize_export_row(row, headers):
+    return {
+        key: normalize_export_cell(value, headers, row)
+        for key, value in (row or {}).items()
+    }
+
+
 def build_export_dataset(headers, active_rows, sampled_row_ids, mode, format_name):
     clean_headers = [header for header in headers if header and not str(header).startswith("__")]
     sampled_set = set(sampled_row_ids or [])
@@ -91,7 +263,7 @@ def build_export_dataset(headers, active_rows, sampled_row_ids, mode, format_nam
         is_sampled = row_id in sampled_set
         if mode == "sampled_only" and not is_sampled:
             continue
-        clean_row = strip_internal_fields(row, clean_headers)
+        clean_row = normalize_export_row(strip_internal_fields(row, clean_headers), clean_headers)
         if mode == "full_with_highlight" and format_name in {"csv", "lark"}:
             clean_row = {"抽样标记": "已抽中" if is_sampled else "", **clean_row}
         ordered_rows.append(clean_row)
@@ -140,7 +312,11 @@ def build_xlsx_bytes(headers, rows, highlighted_positions):
     for row_idx, row in enumerate(rows, start=1):
         fmt = highlight_fmt if (row_idx - 1) in highlighted_positions else normal_fmt
         for col_idx, header in enumerate(headers):
-            worksheet.write(row_idx, col_idx, row.get(header, ""), fmt)
+            cell_value = row.get(header, "")
+            if isinstance(cell_value, str):
+                worksheet.write_string(row_idx, col_idx, cell_value, fmt)
+            else:
+                worksheet.write(row_idx, col_idx, cell_value, fmt)
     worksheet.freeze_panes(1, 0)
     worksheet.autofilter(0, 0, max(len(rows), 1), max(len(headers) - 1, 0))
     workbook.close()

@@ -38,6 +38,7 @@ const elements = {
   fileInput: document.getElementById("fileInput"),
   dropZone: document.getElementById("dropZone"),
   pageUrl: document.getElementById("pageUrl"),
+  itemIdInput: document.getElementById("itemIdInput"),
   extractBtn: document.getElementById("extractBtn"),
   assistExtractBtn: document.getElementById("assistExtractBtn"),
   assistFinishBtn: document.getElementById("assistFinishBtn"),
@@ -198,6 +199,37 @@ function parseUrlList(rawValue) {
         .filter(Boolean)
     )
   );
+}
+
+function normalizeTikTokItemId(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const fromUrlMatch = text.match(/\/video\/([A-Za-z0-9_-]+)/i);
+  if (fromUrlMatch) {
+    return fromUrlMatch[1].trim();
+  }
+  return text.replace(/^[^A-Za-z0-9_-]+|[^A-Za-z0-9_-]+$/g, "");
+}
+
+function parseItemIdList(rawValue) {
+  return Array.from(
+    new Set(
+      String(rawValue || "")
+        .split(/[\n,]+/)
+        .map((item) => normalizeTikTokItemId(item))
+        .filter(Boolean)
+    )
+  );
+}
+
+function buildTikTokItemUrl(itemId) {
+  return `https://www.tiktok.com/@revolve/video/${itemId}`;
+}
+
+function buildMergedUrlList() {
+  const directUrls = parseUrlList(elements.pageUrl.value);
+  const itemUrls = parseItemIdList(elements.itemIdInput?.value).map((itemId) => buildTikTokItemUrl(itemId));
+  return Array.from(new Set([...directUrls, ...itemUrls]));
 }
 
 function mapImagesToCandidates(images, groupKey, groupLabel, sourceUrl, groupIndex = 0) {
@@ -1640,17 +1672,18 @@ function addLocalFiles(fileList) {
 }
 
 async function extractImagesFromPage() {
-  const urlList = parseUrlList(elements.pageUrl.value);
+  const urlList = buildMergedUrlList();
+  const itemIdCount = parseItemIdList(elements.itemIdInput?.value).length;
   if (!urlList.length) {
-    setStatus("请先输入至少一个网页链接");
+    setStatus("请先输入至少一个网页链接或 item ID");
     return;
   }
 
   elements.extractBtn.disabled = true;
   setStatus(
     urlList.some((item) => item.toLowerCase().includes("tiktok.com"))
-      ? `正在批量提取 ${urlList.length} 个链接，其中包含 TikTok，可能会慢一点`
-      : `正在批量提取 ${urlList.length} 个链接…`
+      ? `正在批量提取 ${urlList.length} 个链接${itemIdCount ? `，其中 ${itemIdCount} 个来自 item ID 自动生成` : ""}，包含 TikTok，可能会慢一点`
+      : `正在批量提取 ${urlList.length} 个链接${itemIdCount ? `，其中 ${itemIdCount} 个来自 item ID 自动生成` : ""}…`
   );
 
   try {
@@ -1712,9 +1745,9 @@ async function extractImagesFromPage() {
 }
 
 async function startAssistExtract() {
-  const urlList = parseUrlList(elements.pageUrl.value);
+  const urlList = buildMergedUrlList();
   if (urlList.length !== 1) {
-    setStatus("辅助提图一次只支持 1 个链接");
+    setStatus("辅助提图一次只支持 1 个链接或 1 个 item ID");
     return;
   }
 
@@ -1749,7 +1782,7 @@ async function finishAssistExtract() {
     if (!response.ok) {
       throw new Error(data.error || "辅助提图失败");
     }
-    const sourceUrl = parseUrlList(elements.pageUrl.value)[0] || data.pageUrl || "辅助提图";
+    const sourceUrl = buildMergedUrlList()[0] || data.pageUrl || "辅助提图";
     state.candidates = mapImagesToCandidates(data.images || [], sourceUrl, "辅助提图", sourceUrl, 0);
     dedupeCandidates();
     state.selectedCandidateKeys = new Set(state.candidates.map((item) => item.selectionKey));
@@ -2069,6 +2102,12 @@ function bindEvents() {
   });
 
   elements.pageUrl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      extractImagesFromPage();
+    }
+  });
+  elements.itemIdInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       extractImagesFromPage();
