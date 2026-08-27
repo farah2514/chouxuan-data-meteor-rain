@@ -146,6 +146,9 @@ function simplifyName(value) {
 }
 
 function getVideoSourceCandidates(item) {
+  if (item?.mediaType === "video") {
+    return item.localVideoUrl ? [item.localVideoUrl] : [];
+  }
   return [...new Set([item.localVideoUrl, item.directSrc, item.previewSrc, item.renderSrc, item.proxyUrl, item.src].filter(Boolean))];
 }
 
@@ -394,10 +397,8 @@ async function updateVideoTrimUI() {
   let src = "";
   try {
     src = await ensureLocalVideoUrl(videoItem);
-  } catch {}
-  if (!src) {
-    const sources = getVideoSourceCandidates(videoItem);
-    src = sources[0] || "";
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "视频下载失败");
   }
   if (!src) {
     elements.videoTrimPanel.classList.add("hidden");
@@ -605,7 +606,9 @@ async function loadRenderableImage(item) {
     let lastError = null;
     try {
       await ensureLocalVideoUrl(item);
-    } catch {}
+    } catch (error) {
+      lastError = error;
+    }
     for (const src of getVideoSourceCandidates(item)) {
       try {
         const video = await loadVideoElement(src);
@@ -876,16 +879,16 @@ function renderCandidates() {
         item.mediaType === "video"
           ? `
           <div class="candidate-video-shell">
-            <video
-              class="candidate-thumb candidate-thumb-video"
-              src="${escapeHtml(direct)}"
-              data-direct-src="${escapeHtml(direct)}"
+            <img
+              class="candidate-thumb"
+              src="${escapeHtml(item.posterUrl || proxy)}"
+              data-direct-src="${escapeHtml(item.posterUrl || direct)}"
               data-proxy-src="${escapeHtml(proxy)}"
               data-candidate-id="${escapeHtml(item.id)}"
-              muted
-              playsinline
-              preload="metadata"
-            ></video>
+              alt="候选视频 ${index + 1}"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+            />
             <span class="candidate-media-badge">视频</span>
           </div>
           `
@@ -1026,20 +1029,6 @@ function renderCandidates() {
     });
   });
 
-  elements.candidateGrid.querySelectorAll("video.candidate-thumb-video").forEach((video) => {
-    video.addEventListener("loadeddata", async () => {
-      try {
-        await seekVideo(video, 0);
-      } catch {}
-    });
-    video.addEventListener("error", () => {
-      const current = state.candidates.find((item) => item.id === video.dataset.candidateId);
-      if (!current) return;
-      current.broken = true;
-      state.selectedCandidateKeys.delete(getCandidateKey(current));
-      renderCandidates();
-    });
-  });
 }
 
 function drawPngComposition(canvas, loaded, renderScale = 1, displayScale = 1) {
@@ -1142,7 +1131,9 @@ async function buildGifFrames(groupKey = null) {
       let built = false;
       try {
         await ensureLocalVideoUrl(item);
-      } catch {}
+      } catch (error) {
+        throw error instanceof Error ? error : new Error("视频下载失败");
+      }
       for (const src of getVideoSourceCandidates(item)) {
         try {
           const video = await loadVideoElement(src);
@@ -1200,7 +1191,7 @@ async function renderGifPreview(groupKey = null) {
 async function renderPreview() {
   const groups = getSelectedGroups();
   syncPreviewGroupSelection(groups);
-  updateVideoTrimUI().catch(() => {});
+  await updateVideoTrimUI();
   if (!groups.length) {
     elements.previewCanvas.style.display = "none";
     elements.previewGif.style.display = "none";
