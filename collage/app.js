@@ -64,6 +64,11 @@ const elements = {
   trimPreviewVideo: document.getElementById("trimPreviewVideo"),
   trimStartRange: document.getElementById("trimStartRange"),
   trimEndRange: document.getElementById("trimEndRange"),
+  trimTimelineTrack: document.getElementById("trimTimelineTrack"),
+  trimSelectionWindow: document.getElementById("trimSelectionWindow"),
+  trimStartHandle: document.getElementById("trimStartHandle"),
+  trimEndHandle: document.getElementById("trimEndHandle"),
+  trimPlayButton: document.getElementById("trimPlayButton"),
   trimStartLabel: document.getElementById("trimStartLabel"),
   trimDurationLabel: document.getElementById("trimDurationLabel"),
   trimEndLabel: document.getElementById("trimEndLabel"),
@@ -445,9 +450,26 @@ function updateGifMediaSettingsVisibility() {
 }
 
 function syncTrimLabels(start, end) {
-  if (elements.trimStartLabel) elements.trimStartLabel.textContent = `开始 ${formatTimeLabel(start)}`;
-  if (elements.trimEndLabel) elements.trimEndLabel.textContent = `结束 ${formatTimeLabel(end)}`;
-  if (elements.trimDurationLabel) elements.trimDurationLabel.textContent = `时长 ${formatTimeLabel(end - start)}`;
+  if (elements.trimStartLabel) elements.trimStartLabel.textContent = formatClockLabel(start);
+  if (elements.trimEndLabel) elements.trimEndLabel.textContent = `结束 ${formatClockLabel(end)}`;
+  if (elements.trimDurationLabel) elements.trimDurationLabel.textContent = formatClockLabel(end - start);
+}
+
+function formatClockLabel(value) {
+  const total = Math.max(0, Math.floor(Number(value || 0)));
+  const hours = String(Math.floor(total / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+  const seconds = String(total % 60).padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function syncTrimTimelineVisual(start, end, duration) {
+  if (!elements.trimTimelineTrack) return;
+  const safeDuration = Math.max(0.5, Number(duration) || 0.5);
+  const startPercent = `${(Math.max(0, start) / safeDuration) * 100}%`;
+  const endPercent = `${(Math.max(0, end) / safeDuration) * 100}%`;
+  elements.trimTimelineTrack.style.setProperty("--trim-start-percent", startPercent);
+  elements.trimTimelineTrack.style.setProperty("--trim-end-percent", endPercent);
 }
 
 async function updateVideoTrimUI() {
@@ -495,6 +517,7 @@ async function updateVideoTrimUI() {
     elements.trimStartRange.value = String(start);
     elements.trimEndRange.value = String(end);
     syncTrimLabels(start, end);
+    syncTrimTimelineVisual(start, end, maxDuration);
     elements.trimPreviewVideo.ontimeupdate = () => {
       if (elements.trimPreviewVideo.currentTime >= end) {
         elements.trimPreviewVideo.currentTime = start;
@@ -1900,6 +1923,14 @@ function bindEvents() {
     if (state.exportMode === "gif") {
       scheduleGifPreviewRender();
     }
+  });
+
+  elements.trimPlayButton?.addEventListener("click", () => {
+    const video = elements.trimPreviewVideo;
+    if (!video?.src) return;
+    const start = state.videoClipStart;
+    video.currentTime = start;
+    video.play().catch(() => {});
   });
 
   elements.gifRepeatButtons.forEach((button) => {

@@ -169,31 +169,32 @@
             </div>
             <div id="gifVideoSettings" class="gif-subsection">
               <div class="gif-subsection-title">视频设置</div>
-              <div class="control-grid">
-                <label class="field">
-                  <span>视频开始时间(s)</span>
-                  <input id="gifVideoStartInput" type="number" min="0" max="600" step="0.1" value="0" />
-                </label>
-                <label class="field">
-                  <span>视频截取时长(s)</span>
-                  <input id="gifVideoClipInput" type="number" min="0.5" max="60" step="0.1" value="3" />
-                </label>
-              </div>
               <div id="videoTrimPanel" class="video-trim-panel hidden">
-                <video id="trimPreviewVideo" class="trim-preview-video" muted playsinline controls></video>
-                <div class="trim-range-group">
-                  <label class="field">
-                    <span>拖动开始位置</span>
+                <div class="trim-video-shell">
+                  <video id="trimPreviewVideo" class="trim-preview-video" muted playsinline controls></video>
+                </div>
+                <div class="trim-timeline-panel">
+                  <div class="trim-timeline-track" id="trimTimelineTrack">
+                    <div class="trim-selection-window" id="trimSelectionWindow"></div>
+                    <button type="button" class="trim-handle trim-handle-start" id="trimStartHandle" aria-label="拖动开始位置"></button>
+                    <button type="button" class="trim-handle trim-handle-end" id="trimEndHandle" aria-label="拖动结束位置"></button>
                     <input id="trimStartRange" type="range" min="0" max="100" step="0.01" value="0" />
-                  </label>
-                  <label class="field">
-                    <span>拖动结束位置</span>
                     <input id="trimEndRange" type="range" min="0" max="100" step="0.01" value="100" />
-                  </label>
+                  </div>
+                  <div class="trim-playhead-row">
+                    <button type="button" class="trim-play-button" id="trimPlayButton" aria-label="播放片段">▶</button>
+                    <div class="trim-time-main">
+                      <span id="trimStartLabel">00:00:00</span>
+                      <span class="trim-time-separator">/</span>
+                      <span id="trimDurationLabel">00:00:03</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="trim-hidden-inputs">
+                  <input id="gifVideoStartInput" type="number" min="0" max="600" step="0.1" value="0" />
+                  <input id="gifVideoClipInput" type="number" min="0.5" max="60" step="0.1" value="3" />
                 </div>
                 <div class="trim-time-row">
-                  <span id="trimStartLabel">开始 0.0s</span>
-                  <span id="trimDurationLabel">时长 3.0s</span>
                   <span id="trimEndLabel">结束 3.0s</span>
                 </div>
               </div>
