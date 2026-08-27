@@ -51,27 +51,37 @@
             <span class="panel-chip">呱</span>
           </div>
 
+          <div class="control-group import-mode-group">
+            <label>导入链路</label>
+            <div class="segmented">
+              <button class="segment active" data-import-mode="image" type="button">图片链路</button>
+              <button class="segment" data-import-mode="video" type="button">视频链路</button>
+            </div>
+          </div>
+
           <div class="upload-box" id="dropZone">
             <input id="fileInput" type="file" accept="image/*,video/mp4,video/webm,video/quicktime" multiple />
-            <p>上传图片或视频</p>
-            <span>拖拽或点击选择，视频也能转 GIF</span>
+            <p id="uploadBoxTitle">上传图片</p>
+            <span id="uploadBoxHint">拖拽或点击选择图片文件</span>
           </div>
 
           <div class="url-block">
-            <label for="pageUrl">链接提素材</label>
+            <label for="pageUrl" id="pageUrlLabel">链接提素材</label>
             <div class="url-row">
               <textarea
                 id="pageUrl"
-                placeholder="一行一个链接，或用逗号分隔多个链接"
+                placeholder="一行一个图文链接，或用逗号分隔多个链接"
               ></textarea>
               <button id="extractBtn" class="primary">提取素材</button>
             </div>
-            <label for="itemIdInput">item ID 提素材</label>
-            <div class="url-row">
+            <div id="itemIdBlock" class="hidden">
+              <label for="itemIdInput">item ID 提素材</label>
+              <div class="url-row">
               <textarea
                 id="itemIdInput"
                 placeholder="一行一个 item ID，自动生成 https://www.tiktok.com/@revolve/video/itemID 并按顺序提取"
               ></textarea>
+              </div>
             </div>
             <div class="assist-row">
               <button id="assistExtractBtn" class="ghost" type="button">辅助提图</button>

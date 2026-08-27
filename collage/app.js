@@ -4,6 +4,7 @@ const pageParams = new URLSearchParams(window.location.search);
 const pageMode = pageParams.get("mode") === "gif" ? "gif" : "png";
 
 const state = {
+  importMode: "image",
   layout: "horizontal",
   exportMode: "png",
   pngScale: 1,
@@ -39,6 +40,10 @@ const elements = {
   dropZone: document.getElementById("dropZone"),
   pageUrl: document.getElementById("pageUrl"),
   itemIdInput: document.getElementById("itemIdInput"),
+  itemIdBlock: document.getElementById("itemIdBlock"),
+  pageUrlLabel: document.getElementById("pageUrlLabel"),
+  uploadBoxTitle: document.getElementById("uploadBoxTitle"),
+  uploadBoxHint: document.getElementById("uploadBoxHint"),
   extractBtn: document.getElementById("extractBtn"),
   assistExtractBtn: document.getElementById("assistExtractBtn"),
   assistFinishBtn: document.getElementById("assistFinishBtn"),
@@ -95,6 +100,7 @@ const elements = {
   modalDownloadBtn: document.getElementById("modalDownloadBtn"),
   modalCloseBtn: document.getElementById("modalCloseBtn"),
   layoutButtons: document.querySelectorAll("[data-layout]"),
+  importModeButtons: document.querySelectorAll("[data-import-mode]"),
   exportModeButtons: document.querySelectorAll("[data-export-mode]"),
   pngScaleButtons: document.querySelectorAll("[data-png-scale]"),
   gifRepeatButtons: document.querySelectorAll("[data-gif-repeat-mode]"),
@@ -105,6 +111,41 @@ let imageCounter = 0;
 
 function setStatus(message) {
   elements.statusText.textContent = message;
+}
+
+function getImportModeLabel(mode = state.importMode) {
+  return mode === "video" ? "视频" : "图片";
+}
+
+function isImportModeMatched(mediaType, mode = state.importMode) {
+  return mode === "video" ? mediaType === "video" : mediaType !== "video";
+}
+
+function filterItemsByImportMode(items, mode = state.importMode) {
+  return (items || []).filter((item) => isImportModeMatched(item?.mediaType || "image", mode));
+}
+
+function revokeCandidateResources(item) {
+  if (item?.kind === "local" && item.previewSrc?.startsWith("blob:")) {
+    URL.revokeObjectURL(item.previewSrc);
+  }
+  if (item?.localVideoUrl?.startsWith("blob:")) {
+    URL.revokeObjectURL(item.localVideoUrl);
+  }
+}
+
+function syncCandidatesToImportMode() {
+  const removed = state.candidates.filter((item) => !isImportModeMatched(item.mediaType));
+  if (!removed.length) return 0;
+  removed.forEach((item) => {
+    revokeCandidateResources(item);
+    state.selectedCandidateKeys.delete(item.selectionKey);
+  });
+  state.candidates = state.candidates.filter((item) => isImportModeMatched(item.mediaType));
+  state.selectedPreviewGroupKeys.clear();
+  renderCandidates();
+  markPreviewDirty(`已切到${getImportModeLabel()}链路，已移除不匹配的素材`);
+  return removed.length;
 }
 
 function resetPreviewArea(emptyText = null) {
@@ -237,8 +278,31 @@ function buildTikTokItemUrl(itemId) {
 
 function buildMergedUrlList() {
   const directUrls = parseUrlList(elements.pageUrl.value);
-  const itemUrls = parseItemIdList(elements.itemIdInput?.value).map((itemId) => buildTikTokItemUrl(itemId));
+  const itemUrls = state.importMode === "video"
+    ? parseItemIdList(elements.itemIdInput?.value).map((itemId) => buildTikTokItemUrl(itemId))
+    : [];
   return Array.from(new Set([...directUrls, ...itemUrls]));
+}
+
+function updateImportModeUI() {
+  elements.importModeButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.importMode === state.importMode);
+  });
+  const isVideo = state.importMode === "video";
+  elements.fileInput.accept = isVideo ? "video/mp4,video/webm,video/quicktime,video/*" : "image/*";
+  elements.uploadBoxTitle.textContent = isVideo ? "上传视频" : "上传图片";
+  elements.uploadBoxHint.textContent = isVideo ? "拖拽或点击选择视频文件" : "拖拽或点击选择图片文件";
+  elements.pageUrlLabel.textContent = isVideo ? "视频链接提素材" : "图文链接提素材";
+  elements.pageUrl.placeholder = isVideo
+    ? "一行一个视频链接，或用逗号分隔多个链接"
+    : "一行一个图文链接，或用逗号分隔多个链接";
+  elements.extractBtn.textContent = isVideo ? "提取视频" : "提取图片";
+  elements.itemIdBlock.classList.toggle("hidden", !isVideo);
+  if (!isVideo && elements.itemIdInput) {
+    elements.itemIdInput.value = "";
+  }
+  state.candidateFilter = isVideo ? "video" : "image";
+  updateCandidateFilterButtons();
 }
 
 function mapImagesToCandidates(images, groupKey, groupLabel, sourceUrl, groupIndex = 0) {
@@ -1679,7 +1743,14 @@ function addLocalFiles(fileList) {
     return;
   }
 
-  files.forEach((file) => {
+  const matchedFiles = files.filter((file) => isImportModeMatched(file.type.startsWith("video/") ? "video" : "image"));
+  const skippedCount = files.length - matchedFiles.length;
+  if (!matchedFiles.length) {
+    setStatus(`当前是${getImportModeLabel()}链路，请上传对应类型的文件`);
+    return;
+  }
+
+  matchedFiles.forEach((file) => {
     const objectUrl = URL.createObjectURL(file);
     const mediaType = file.type.startsWith("video/") ? "video" : "image";
     const candidate = createCandidate({
@@ -1706,22 +1777,24 @@ function addLocalFiles(fileList) {
 
   dedupeCandidates();
   renderCandidates();
-  markPreviewDirty("素材已加入，选好后点“刷新预览”查看结果");
+  markPreviewDirty(
+    `已加入 ${matchedFiles.length} 个${getImportModeLabel()}素材${skippedCount ? `，已忽略 ${skippedCount} 个不匹配文件` : ""}，选好后点“刷新预览”查看结果`
+  );
 }
 
 async function extractImagesFromPage() {
   const urlList = buildMergedUrlList();
   const itemIdCount = parseItemIdList(elements.itemIdInput?.value).length;
   if (!urlList.length) {
-    setStatus("请先输入至少一个网页链接或 item ID");
+    setStatus(state.importMode === "video" ? "请先输入至少一个视频链接或 item ID" : "请先输入至少一个图文链接");
     return;
   }
 
   elements.extractBtn.disabled = true;
   setStatus(
     urlList.some((item) => item.toLowerCase().includes("tiktok.com"))
-      ? `正在批量提取 ${urlList.length} 个链接${itemIdCount ? `，其中 ${itemIdCount} 个来自 item ID 自动生成` : ""}，包含 TikTok，可能会慢一点`
-      : `正在批量提取 ${urlList.length} 个链接${itemIdCount ? `，其中 ${itemIdCount} 个来自 item ID 自动生成` : ""}…`
+      ? `正在批量提取 ${urlList.length} 个${getImportModeLabel()}链接${itemIdCount ? `，其中 ${itemIdCount} 个来自 item ID 自动生成` : ""}，包含 TikTok，可能会慢一点`
+      : `正在批量提取 ${urlList.length} 个${getImportModeLabel()}链接${itemIdCount ? `，其中 ${itemIdCount} 个来自 item ID 自动生成` : ""}…`
   );
 
   try {
@@ -1761,8 +1834,13 @@ async function extractImagesFromPage() {
         continue;
       }
 
+      const filteredImages = filterItemsByImportMode(data.images || []);
+      if (!filteredImages.length) {
+        failures.push(`${value} 没有提取到可用${getImportModeLabel()}素材`);
+        continue;
+      }
       const groupLabel = `链接 ${index + 1}`;
-      const batch = mapImagesToCandidates(data.images, value, groupLabel, value, index);
+      const batch = mapImagesToCandidates(filteredImages, value, groupLabel, value, index);
       mergedCandidates.push(...batch);
     }
 
@@ -1771,10 +1849,10 @@ async function extractImagesFromPage() {
     state.selectedCandidateKeys = new Set(state.candidates.map((item) => item.selectionKey));
     renderCandidates();
     if (!state.candidates.length) {
-      throw new Error(failures[0] || "没有提取到可用图片");
+      throw new Error(failures[0] || `没有提取到可用${getImportModeLabel()}素材`);
     }
     const failureText = failures.length ? `，${failures.length} 个链接提取失败` : "";
-    markPreviewDirty(`已提取 ${urlList.length - failures.length} 组素材，共 ${state.candidates.length} 张${failureText}。选好后点“刷新预览”`);
+    markPreviewDirty(`已提取 ${urlList.length - failures.length} 组${getImportModeLabel()}素材，共 ${state.candidates.length} 个${failureText}。选好后点“刷新预览”`);
   } catch (error) {
     setStatus(`提取失败：${error.message}`);
   } finally {
@@ -1785,7 +1863,7 @@ async function extractImagesFromPage() {
 async function startAssistExtract() {
   const urlList = buildMergedUrlList();
   if (urlList.length !== 1) {
-    setStatus("辅助提图一次只支持 1 个链接或 1 个 item ID");
+    setStatus(state.importMode === "video" ? "视频链路辅助提取一次只支持 1 个链接或 1 个 item ID" : "图片链路辅助提取一次只支持 1 个图文链接");
     return;
   }
 
@@ -1821,7 +1899,11 @@ async function finishAssistExtract() {
       throw new Error(data.error || "辅助提图失败");
     }
     const sourceUrl = buildMergedUrlList()[0] || data.pageUrl || "辅助提图";
-    state.candidates = mapImagesToCandidates(data.images || [], sourceUrl, "辅助提图", sourceUrl, 0);
+    const filteredImages = filterItemsByImportMode(data.images || []);
+    if (!filteredImages.length) {
+      throw new Error(`辅助提取结果里没有可用${getImportModeLabel()}素材`);
+    }
+    state.candidates = mapImagesToCandidates(filteredImages, sourceUrl, "辅助提图", sourceUrl, 0);
     dedupeCandidates();
     state.selectedCandidateKeys = new Set(state.candidates.map((item) => item.selectionKey));
     state.assistSessionId = null;
@@ -1928,6 +2010,16 @@ function bindEvents() {
   });
 
   elements.extractBtn.addEventListener("click", extractImagesFromPage);
+  elements.importModeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextMode = button.dataset.importMode === "video" ? "video" : "image";
+      if (state.importMode === nextMode) return;
+      state.importMode = nextMode;
+      updateImportModeUI();
+      syncCandidatesToImportMode();
+      setStatus(`已切换到${getImportModeLabel()}链路，后续导入会自动分流`);
+    });
+  });
   elements.assistExtractBtn.addEventListener("click", () => {
     startAssistExtract().catch((error) => setStatus(`辅助提图启动失败：${error.message}`));
   });
@@ -2162,7 +2254,9 @@ function bindEvents() {
 }
 
 function init() {
+  state.importMode = pageMode === "png" ? "image" : "image";
   state.exportMode = pageMode;
+  updateImportModeUI();
   updateRangeLabels();
   updateLayoutButtons();
   updateExportModeButtons();
