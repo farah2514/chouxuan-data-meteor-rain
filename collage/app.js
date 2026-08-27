@@ -31,6 +31,7 @@ const state = {
   assistSessionId: null,
   selectedPreviewGroupKeys: new Set(),
   gifPreviewTimer: null,
+  previewDirty: false,
 };
 
 const elements = {
@@ -102,6 +103,36 @@ let imageCounter = 0;
 
 function setStatus(message) {
   elements.statusText.textContent = message;
+}
+
+function resetPreviewArea(emptyText = null) {
+  if (emptyText) {
+    elements.emptyPreview.textContent = emptyText;
+  }
+  elements.previewCanvas.style.display = "none";
+  elements.previewGif.style.display = "none";
+  elements.previewGif.classList.add("hidden");
+  clearVideoPreview();
+  elements.previewGallery.innerHTML = "";
+  elements.previewGallery.classList.add("hidden");
+  clearGifPreviewUrl();
+  clearGroupPreviewUrls();
+  closePreviewModal();
+  elements.emptyPreview.style.display = "grid";
+}
+
+function markPreviewDirty(message = null) {
+  state.previewDirty = true;
+  resetPreviewArea(state.exportMode === "gif" ? "这里会显示完整动图预览" : "这里会显示完整预览");
+  if (message) {
+    setStatus(message);
+    return;
+  }
+  if (!getSelectedImages().length) {
+    setStatus("请先勾选素材，再点“刷新预览”");
+    return;
+  }
+  setStatus("已更新设置，点“刷新预览”查看结果");
 }
 
 function updateAssistButtons() {
@@ -753,7 +784,7 @@ function moveCandidateImage(id, direction) {
   const [item] = state.candidates.splice(index, 1);
   state.candidates.splice(targetIndex, 0, item);
   renderCandidates();
-  renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+  markPreviewDirty("顺序已调整，点“刷新预览”查看结果");
 }
 
 function reorderCandidates(dragId, targetId, position = "before") {
@@ -807,9 +838,7 @@ function scheduleGifPreviewRender() {
   }
   state.gifPreviewTimer = setTimeout(() => {
     state.gifPreviewTimer = null;
-    if (state.exportMode === "gif") {
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    }
+    if (state.exportMode === "gif") markPreviewDirty("裁剪范围已更新，点“刷新预览”查看结果");
   }, 180);
 }
 
@@ -908,7 +937,7 @@ function finishPointerDrag(commit = true, clientX = null) {
     const changed = reorderCandidates(dragId, targetId, position);
     if (changed) {
       renderCandidates();
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+      markPreviewDirty("顺序已调整，点“刷新预览”查看结果");
     }
   }
 }
@@ -923,7 +952,7 @@ function removeCandidate(id) {
     state.selectedCandidateKeys.delete(getCandidateKey(current));
   }
   renderCandidates();
-  renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+  markPreviewDirty();
 }
 
 function renderCandidates() {
@@ -1055,7 +1084,7 @@ function renderCandidates() {
       if (input.checked) state.selectedCandidateKeys.add(key);
       else state.selectedCandidateKeys.delete(key);
       renderCandidates();
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+      markPreviewDirty();
     });
   });
 
@@ -1065,9 +1094,7 @@ function renderCandidates() {
       if (!current) return;
       current.duration = parsePositiveFloat(input.value, current.duration, 0.1, 20);
       input.value = current.duration;
-      if (state.exportMode === "gif") {
-        renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-      }
+      if (state.exportMode === "gif") markPreviewDirty();
     });
   });
 
@@ -1281,20 +1308,12 @@ async function renderGifPreview(groupKey = null) {
 }
 
 async function renderPreview() {
+  state.previewDirty = false;
   const groups = getSelectedGroups();
   syncPreviewGroupSelection(groups);
   await updateVideoTrimUI();
   if (!groups.length) {
-    elements.previewCanvas.style.display = "none";
-    elements.previewGif.style.display = "none";
-    elements.previewGif.classList.add("hidden");
-    clearVideoPreview();
-    elements.previewGallery.innerHTML = "";
-    elements.previewGallery.classList.add("hidden");
-    clearGifPreviewUrl();
-    clearGroupPreviewUrls();
-    closePreviewModal();
-    elements.emptyPreview.style.display = "grid";
+    resetPreviewArea(state.exportMode === "gif" ? "这里会显示完整动图预览" : "这里会显示完整预览");
     return;
   }
 
@@ -1513,7 +1532,7 @@ function addLocalFiles(fileList) {
 
   dedupeCandidates();
   renderCandidates();
-  renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+  markPreviewDirty("素材已加入，选好后点“刷新预览”查看结果");
 }
 
 async function extractImagesFromPage() {
@@ -1576,12 +1595,11 @@ async function extractImagesFromPage() {
     dedupeCandidates();
     state.selectedCandidateKeys = new Set(state.candidates.map((item) => item.selectionKey));
     renderCandidates();
-    renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
     if (!state.candidates.length) {
       throw new Error(failures[0] || "没有提取到可用图片");
     }
     const failureText = failures.length ? `，${failures.length} 个链接提取失败` : "";
-    setStatus(`已提取 ${urlList.length - failures.length} 组链接图片，共 ${state.candidates.length} 张${failureText}`);
+    markPreviewDirty(`已提取 ${urlList.length - failures.length} 组素材，共 ${state.candidates.length} 张${failureText}。选好后点“刷新预览”`);
   } catch (error) {
     setStatus(`提取失败：${error.message}`);
   } finally {
@@ -1634,8 +1652,7 @@ async function finishAssistExtract() {
     state.assistSessionId = null;
     updateAssistButtons();
     renderCandidates();
-    renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    setStatus(`辅助提图成功，已识别 ${state.candidates.length} 张图片`);
+    markPreviewDirty(`辅助提图成功，已识别 ${state.candidates.length} 张素材。选好后点“刷新预览”`);
   } catch (error) {
     setStatus(`继续识别失败：${error.message}`);
   } finally {
@@ -1663,10 +1680,11 @@ function clearAll() {
   state.candidates = [];
   state.selectedCandidateKeys.clear();
   state.selectedPreviewGroupKeys.clear();
+  state.previewDirty = false;
   clearGroupPreviewUrls();
   closePreviewModal();
   renderCandidates();
-  renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+  resetPreviewArea("这里会显示完整预览");
   setStatus("已清空候选图片和勾选状态");
 }
 
@@ -1793,7 +1811,7 @@ function bindEvents() {
     button.addEventListener("click", () => {
       state.layout = button.dataset.layout;
       updateLayoutButtons();
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+      markPreviewDirty();
     });
   });
 
@@ -1801,7 +1819,7 @@ function bindEvents() {
     button.addEventListener("click", () => {
       state.exportMode = button.dataset.exportMode;
       updateExportModeButtons();
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+      markPreviewDirty();
     });
   });
 
@@ -1812,9 +1830,7 @@ function bindEvents() {
         state.pngScale = 1;
       }
       updatePngScaleButtons();
-      if (state.exportMode === "png") {
-        renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-      }
+      if (state.exportMode === "png") markPreviewDirty();
     });
   });
 
@@ -1833,46 +1849,42 @@ function bindEvents() {
 
   [elements.gapRange, elements.paddingRange, elements.radiusRange].forEach((input) => {
     input.addEventListener("change", () => {
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+      markPreviewDirty();
     });
   });
 
   elements.backgroundColor.addEventListener("input", () => {
     state.backgroundColor = elements.backgroundColor.value;
     elements.gifBackgroundColor.value = state.backgroundColor;
-    renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    markPreviewDirty();
   });
 
   elements.gifBackgroundColor.addEventListener("input", () => {
     state.backgroundColor = elements.gifBackgroundColor.value;
     elements.backgroundColor.value = state.backgroundColor;
-    renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    markPreviewDirty();
   });
 
   elements.shadowToggle.addEventListener("change", () => {
     state.shadow = elements.shadowToggle.checked;
-    renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    markPreviewDirty();
   });
 
   elements.outlineToggle.addEventListener("change", () => {
     state.outline = elements.outlineToggle.checked;
-    renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
+    markPreviewDirty();
   });
 
   elements.gifWidthInput.addEventListener("change", () => {
     state.gifWidth = parsePositiveInt(elements.gifWidthInput.value, state.gifWidth, 100, 2400);
     elements.gifWidthInput.value = state.gifWidth;
-    if (state.exportMode === "gif") {
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    }
+    if (state.exportMode === "gif") markPreviewDirty();
   });
 
   elements.gifHeightInput.addEventListener("change", () => {
     state.gifHeight = parsePositiveInt(elements.gifHeightInput.value, state.gifHeight, 100, 2400);
     elements.gifHeightInput.value = state.gifHeight;
-    if (state.exportMode === "gif") {
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    }
+    if (state.exportMode === "gif") markPreviewDirty();
   });
 
   elements.gifDurationInput.addEventListener("change", () => {
@@ -1889,18 +1901,14 @@ function bindEvents() {
     state.videoClipStart = parsePositiveFloat(elements.gifVideoStartInput.value, state.videoClipStart, 0, 600);
     elements.gifVideoStartInput.value = state.videoClipStart;
     updateVideoTrimUI().catch(() => {});
-    if (state.exportMode === "gif") {
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    }
+    if (state.exportMode === "gif") markPreviewDirty();
   });
 
   elements.gifVideoClipInput.addEventListener("change", () => {
     state.videoClipDuration = parsePositiveFloat(elements.gifVideoClipInput.value, state.videoClipDuration, 0.5, 60);
     elements.gifVideoClipInput.value = state.videoClipDuration;
     updateVideoTrimUI().catch(() => {});
-    if (state.exportMode === "gif") {
-      renderPreview().catch((error) => setStatus(`预览失败：${error.message}`));
-    }
+    if (state.exportMode === "gif") markPreviewDirty();
   });
 
   elements.trimStartRange?.addEventListener("input", () => {
@@ -1950,7 +1958,7 @@ function bindEvents() {
       item.duration = state.defaultGifDuration;
     });
     renderCandidates();
-    setStatus("已把默认 GIF 速度应用到当前勾选图片");
+    markPreviewDirty("已把默认 GIF 速度应用到当前勾选图片，点“刷新预览”查看结果");
   });
 
   elements.pageUrl.addEventListener("keydown", (event) => {
